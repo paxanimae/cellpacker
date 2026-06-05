@@ -37,6 +37,9 @@ def get_user_settings(defaults: dict = DEFAULTS) -> dict | None:
             tabs.addTab(self._make_route_tab(),   "Routing")
             tabs.addTab(self._make_score_tab(),   "Scoring")
 
+            # Keep plus_busbar_z in sync with cell_height as user types.
+            self.cell_height.valueChanged.connect(self.plus_busbar_z.setValue)
+
             btns = Qt.QDialogButtonBox(
                 Qt.QDialogButtonBox.Ok | Qt.QDialogButtonBox.Cancel
             )
@@ -181,14 +184,11 @@ Candidate cells:      Selected 20s4p:       Busbars:
             self.pol_offset = self._dspin(d["polarity_offset"], 0.1, 50.0)
             f.addRow("Polarity offset (mm)", self.pol_offset)
 
-            self.alt_layers = self._check(d["alternate_series_jumper_layers"])
-            f.addRow("Alternate series jumper layers", self.alt_layers)
+            self.plus_busbar_z = self._dspin(d["plus_busbar_z"], -500.0, 500.0)
+            f.addRow("+ busbar Z (mm, = cell height)", self.plus_busbar_z)
 
-            self.top_z = self._dspin(d["top_layer_z"], -20.0, 20.0)
-            f.addRow("Top layer Z offset", self.top_z)
-
-            self.bot_z = self._dspin(d["bottom_layer_z"], -20.0, 20.0)
-            f.addRow("Bottom layer Z offset", self.bot_z)
+            self.minus_busbar_z = self._dspin(d["minus_busbar_z"], -500.0, 500.0)
+            f.addRow("− busbar Z (mm)", self.minus_busbar_z)
 
             return w
 
@@ -273,9 +273,8 @@ Candidate cells:      Selected 20s4p:       Busbars:
                 "polarity_offset":               self.pol_offset.value(),
                 "draw_terminal_dots":            self.draw_dots.isChecked(),
                 "terminal_dot_radius":           self.dot_radius.value(),
-                "alternate_series_jumper_layers": self.alt_layers.isChecked(),
-                "top_layer_z":                   self.top_z.value(),
-                "bottom_layer_z":                self.bot_z.value(),
+                "plus_busbar_z":                 self.plus_busbar_z.value(),
+                "minus_busbar_z":                self.minus_busbar_z.value(),
                 "prefer_shape_usage":            self.prefer_usage.isChecked(),
                 "shape_usage_weight":            self.w_usage.value(),
                 "compactness_weight":            self.w_compact.value(),
@@ -283,8 +282,8 @@ Candidate cells:      Selected 20s4p:       Busbars:
                 "row_shift_weight":              self.w_rowshift.value(),
                 "boundary_margin_penalty_weight": self.w_boundary.value(),
                 # non-GUI fields forwarded unchanged
-                "top_layer_color":               d["top_layer_color"],
-                "bottom_layer_color":            d["bottom_layer_color"],
+                "plus_busbar_color":             d["plus_busbar_color"],
+                "minus_busbar_color":            d["minus_busbar_color"],
                 "cell_fill_transparency":        d["cell_fill_transparency"],
             }
 

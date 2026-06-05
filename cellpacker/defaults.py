@@ -42,10 +42,8 @@ DEFAULTS: dict = {
     "draw_busbar_solids": False,
     "busbar_width": 8.0,
     "busbar_thickness": 0.2,
-    # Z height of the positive-terminal busbar layer (top face of cells).
-    # Should match cell_height.  Negative-terminal layer sits at the base.
-    "plus_busbar_z": 70.0,
-    "minus_busbar_z": 0.0,
+    "plus_busbar_z": 70.0,   # Z of + terminal busbar layer — keep equal to cell_height
+    "minus_busbar_z": 0.0,   # Z of − terminal busbar layer (cell base)
 
     # ── Polarity markers ──────────────────────────────────────────────────
     "draw_polarity_markers": True,

@@ -1,8 +1,7 @@
 """
 cellpacker.layout.rows
 ~~~~~~~~~~~~~~~~~~~~~~
-Cluster a flat list of 2-D points into horizontal rows and provide
-helpers for working with row data.
+Cluster a flat list of 2-D points into horizontal rows.
 """
 
 from __future__ import annotations
@@ -18,13 +17,9 @@ def cluster_rows(
     tol: float | None = None,
 ) -> list[Row]:
     """
-    Group *points* into rows by proximity along the Y axis.
-
-    Points within *tol* of each other in Y are considered the same row.
-    Default *tol* is ``pitch_y * 0.35``, which works well for hex grids.
-
-    Returns a list of rows sorted ascending by Y, each row sorted ascending
-    by X.
+    Group *points* into rows by Y proximity.
+    Default *tol* is ``pitch_y * 0.35``.
+    Returns rows sorted ascending by Y, each row sorted ascending by X.
     """
     if not points:
         return []
@@ -33,6 +28,12 @@ def cluster_rows(
         tol = pitch_y * 0.35
 
     pts = sorted(points, key=lambda p: p[1])
+
+    # Diagnostic: print Y spread so we can spot coordinate system issues
+    y_vals = [p[1] for p in pts]
+    print(f"BatteryPackLayoutTool: clustering {len(pts)} points, "
+          f"Y range [{y_vals[0]:.1f}, {y_vals[-1]:.1f}], pitch_y={pitch_y:.2f}, tol={tol:.2f}")
+
     rows: list[Row] = []
     current: Row = [pts[0]]
 
@@ -47,9 +48,11 @@ def cluster_rows(
     for row in rows:
         row.sort(key=lambda p: p[0])
 
+    row_sizes = [len(r) for r in rows]
+    print(f"BatteryPackLayoutTool: {len(rows)} rows, sizes: {row_sizes}")
+
     return rows
 
 
 def valid_rows(rows: list[Row], min_cells: int) -> list[Row]:
-    """Return only rows that have at least *min_cells* points."""
     return [r for r in rows if len(r) >= min_cells]

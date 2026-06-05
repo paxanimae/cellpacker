@@ -2,9 +2,6 @@
 cellpacker.drawing.primitives
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Thin wrappers around FreeCAD Part / Draft objects.
-
-Each function creates exactly one document object, adds it to *group*,
-optionally styles it, and returns it.  Nothing here does layout logic.
 """
 
 from __future__ import annotations
@@ -16,7 +13,6 @@ import Draft
 # ── View styling ──────────────────────────────────────────────────────────
 
 def _apply_color(obj, rgb: tuple | None) -> None:
-    """Apply *rgb* to all recognised color attributes on *obj*'s ViewObject."""
     if rgb is None or not hasattr(obj, "ViewObject"):
         return
     for attr in ("LineColor", "ShapeColor", "TextColor"):
@@ -44,12 +40,16 @@ def draw_circle(
     label: str,
     group,
     color: tuple | None = None,
+    normal: App.Vector | None = None,
 ) -> object:
     """
-    Draw a filled 2-D cell disk as a ``Part.Face`` (Draft circles are
-    wire-only and don't honour ``ShapeColor``).
+    Draw a filled 2-D cell disk as a Part.Face.
+    *normal* defaults to the world Z axis; pass the sketch normal for
+    correct orientation when the sketch is not in the XY plane.
     """
-    edge = Part.makeCircle(radius, global_pt, App.Vector(0, 0, 1))
+    if normal is None:
+        normal = App.Vector(0, 0, 1)
+    edge = Part.makeCircle(radius, global_pt, normal)
     face = Part.Face(Part.Wire([edge]))
     obj = doc.addObject("Part::Feature", label)
     obj.Shape = face
@@ -72,7 +72,6 @@ def draw_cylinder(
     group,
     color: tuple | None = None,
 ) -> object:
-    """Draw a 3-D cylinder representing a physical cell."""
     cyl = doc.addObject("Part::Cylinder", label)
     cyl.Radius = radius
     cyl.Height = height
@@ -90,8 +89,13 @@ def draw_text(
     group,
     color: tuple | None = None,
 ) -> object:
-    """Place a Draft text label at *global_pt*."""
-    txt = Draft.makeText([text], point=global_pt)
+    """Place a text label, compatible with FreeCAD 0.x and 1.x."""
+    try:
+        # FreeCAD 1.x preferred API
+        txt = Draft.make_text([text], placement=App.Placement(global_pt, App.Rotation()))
+    except AttributeError:
+        # FreeCAD 0.x fallback
+        txt = Draft.makeText([text], point=global_pt)
     txt.Label = label
     group.addObject(txt)
     _apply_color(txt, color)
@@ -106,7 +110,6 @@ def draw_polyline(
     color: tuple | None = None,
     closed: bool = False,
 ) -> object:
-    """Draw a Draft wire through *global_points*."""
     wire = Draft.makeWire(global_points, closed=closed, face=False)
     wire.Label = label
     group.addObject(wire)
@@ -122,7 +125,6 @@ def draw_circle_outline(
     group,
     color: tuple | None = None,
 ) -> object:
-    """Draw a Draft circle (wire outline, for terminal dots)."""
     circ = Draft.makeCircle(
         radius, placement=App.Placement(global_pt, App.Rotation())
     )
@@ -142,7 +144,6 @@ def draw_busbar_strip(
     group,
     color: tuple | None = None,
 ) -> object | None:
-    """Extrude a rectangular busbar strip between *p1* and *p2*."""
     v = p2.sub(p1)
     length = v.Length
     if length < 0.001:

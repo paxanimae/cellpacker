@@ -53,7 +53,9 @@ def _busbar_path(
             if seg is not None:
                 created.append(seg)
     else:
-        created.append(draw_polyline(doc, points, label, group, color=color))
+        # Scale mm width to a visible pixel line width (1 mm ≈ 0.5 px at typical zoom)
+        lw = max(1.0, cfg.get("busbar_width", 8.0) * 0.5)
+        created.append(draw_polyline(doc, points, label, group, color=color, line_width=lw))
     return created
 
 
@@ -124,8 +126,15 @@ def draw_parallel_busbars(
         c_plus  = series_color if series_color else plus_color
         c_minus = series_color if series_color else minus_color
 
-        plus_pts  = [_at_z(terminal_lookup[(c["series"], c["parallel"])]["plus"],  plus_z)  for c in row]
-        minus_pts = [_at_z(terminal_lookup[(c["series"], c["parallel"])]["minus"], minus_z) for c in row]
+        # Sort by X so the polyline runs left-to-right regardless of snake ordering
+        plus_pts  = sorted(
+            [_at_z(terminal_lookup[(c["series"], c["parallel"])]["plus"],  plus_z)  for c in row],
+            key=lambda p: p.x,
+        )
+        minus_pts = sorted(
+            [_at_z(terminal_lookup[(c["series"], c["parallel"])]["minus"], minus_z) for c in row],
+            key=lambda p: p.x,
+        )
 
         _busbar_path(doc, plus_pts,  f"BUS_PLUS_S{s:02d}",  grp_plus,  cfg, c_plus)
         _busbar_path(doc, minus_pts, f"BUS_MINUS_S{s:02d}", grp_minus, cfg, c_minus)
@@ -172,9 +181,13 @@ def draw_series_jumpers(
         label_base = f"BUS_SER_S{s:02d}_S{s_next:02d}"
 
         if style == "paired":
-            n = min(len(plus_pts_a), len(minus_pts_b))
+            # Sort both by X so snake-reversed rows still pair left-to-left,
+            # not left-to-right which would produce crossing jumpers.
+            a_sorted = sorted(plus_pts_a,  key=lambda p: p.x)
+            b_sorted = sorted(minus_pts_b, key=lambda p: p.x)
+            n = min(len(a_sorted), len(b_sorted))
             for j in range(n):
-                _busbar_path(doc, [plus_pts_a[j], minus_pts_b[j]],
+                _busbar_path(doc, [a_sorted[j], b_sorted[j]],
                              f"{label_base}_P{j+1:02d}", grp, cfg, color)
 
         elif style == "rail":

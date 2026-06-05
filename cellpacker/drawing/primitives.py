@@ -22,11 +22,11 @@ def _apply_color(obj, rgb: tuple | None) -> None:
             pass
 
 
-def _apply_busbar_style(obj, rgb: tuple | None) -> None:
+def _apply_busbar_style(obj, rgb: tuple | None, line_width: float = 4.0) -> None:
     _apply_color(obj, rgb)
     if hasattr(obj, "ViewObject"):
         try:
-            obj.ViewObject.LineWidth = 4.0
+            obj.ViewObject.LineWidth = max(1.0, float(line_width))
         except Exception:
             pass
 
@@ -109,11 +109,12 @@ def draw_polyline(
     group,
     color: tuple | None = None,
     closed: bool = False,
+    line_width: float = 4.0,
 ) -> object:
     wire = Draft.makeWire(global_points, closed=closed, face=False)
     wire.Label = label
     group.addObject(wire)
-    _apply_busbar_style(wire, color)
+    _apply_busbar_style(wire, color, line_width=line_width)
     return wire
 
 

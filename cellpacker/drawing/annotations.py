@@ -25,8 +25,8 @@ def draw_polarity_markers(
         minus_pt = info["minus"]
 
         if cfg["draw_polarity_markers"]:
-            draw_text(doc, plus_pt,  "+", name + "_PLUS",  group, color=(0.8, 0.0, 0.0))
-            draw_text(doc, minus_pt, "−", name + "_MINUS", group, color=(0.0, 0.0, 0.8))
+            draw_text(doc, plus_pt,  "(+)", name + "_PLUS",  group, color=(0.8, 0.0, 0.0))
+            draw_text(doc, minus_pt, "(-)", name + "_MINUS", group, color=(0.0, 0.0, 0.8))
 
         if cfg["draw_terminal_dots"]:
             r = cfg["terminal_dot_radius"]

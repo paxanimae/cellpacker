@@ -6,6 +6,20 @@ The GUI is pre-populated from these values, and they are
 used as fallback wherever a key might be missing.
 """
 
+# Standard cylindrical cell presets  {name: (diameter_mm, height_mm)}
+# Diameters are nominal; add clearance for wrapper thickness in the dialog.
+CELL_PRESETS: dict[str, tuple[float, float]] = {
+    "14500": (14.0,  50.0),
+    "16340": (16.0,  34.0),
+    "18650": (18.4,  65.0),
+    "20700": (20.0,  70.0),
+    "21700": (21.0,  70.0),
+    "26650": (26.0,  65.0),
+    "32650": (32.0,  65.0),
+    "32700": (32.0,  70.0),
+    "4680":  (46.0,  80.0),
+}
+
 DEFAULTS: dict = {
     # ── Mode ──────────────────────────────────────────────────────────────
     "mode": "pack",           # "fit" | "pack"

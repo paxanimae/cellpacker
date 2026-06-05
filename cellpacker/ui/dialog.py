@@ -7,7 +7,7 @@ on cancellation.
 
 from __future__ import annotations
 
-from cellpacker.defaults import DEFAULTS
+from cellpacker.defaults import DEFAULTS, CELL_PRESETS
 
 
 def get_user_settings(defaults: dict = DEFAULTS) -> dict | None:
@@ -87,6 +87,12 @@ Candidate cells:      Selected 20s4p:       Busbars:
             self.mode.setCurrentText(str(d["mode"]))
             f.addRow("Mode", self.mode)
 
+            # ── Cell type preset dropdown ──────────────────────────────────
+            self.cell_type = Qt.QComboBox()
+            self.cell_type.addItem("Custom")
+            for name in CELL_PRESETS:
+                self.cell_type.addItem(name)
+
             self.cell_diameter = self._dspin(d["cell_diameter"], 1.0, 100.0)
             f.addRow("Cell diameter (mm)", self.cell_diameter)
 
@@ -95,6 +101,26 @@ Candidate cells:      Selected 20s4p:       Busbars:
 
             self.cell_height = self._dspin(d["cell_height"], 1.0, 200.0)
             f.addRow("Cell height (mm)", self.cell_height)
+
+            # Selecting a preset fills diameter and height (height signal then
+            # cascades to plus_busbar_z via the connection in __init__).
+            def _apply_preset(idx):
+                name = self.cell_type.currentText()
+                if name in CELL_PRESETS:
+                    diam, ht = CELL_PRESETS[name]
+                    self.cell_diameter.setValue(diam)
+                    self.cell_height.setValue(ht)
+
+            self.cell_type.currentIndexChanged.connect(_apply_preset)
+
+            # Pre-select the matching preset if the current defaults match one.
+            for name, (diam, ht) in CELL_PRESETS.items():
+                if (abs(d["cell_diameter"] - diam) < 0.05
+                        and abs(d["cell_height"] - ht) < 0.05):
+                    self.cell_type.setCurrentText(name)
+                    break
+
+            f.insertRow(1, "Cell type", self.cell_type)
 
             self.target_s = self._spin(d["target_s"], 1, 200)
             f.addRow("Series groups (S)", self.target_s)

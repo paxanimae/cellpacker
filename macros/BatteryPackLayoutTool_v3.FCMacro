@@ -24,6 +24,10 @@ _macro_dir = os.path.dirname(os.path.abspath(__file__))
 if _macro_dir not in sys.path:
     sys.path.insert(0, _macro_dir)
 
+# ── Flush any cached cellpacker modules so edits take effect immediately ───
+for _mod in [k for k in sys.modules if k == "cellpacker" or k.startswith("cellpacker.")]:
+    del sys.modules[_mod]
+
 # ── Imports ────────────────────────────────────────────────────────────────
 import FreeCAD as App
 import FreeCADGui as Gui

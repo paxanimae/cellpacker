@@ -49,7 +49,11 @@ from cellpacker.drawing.cells import (
     draw_all_selected_cells,
     get_sketch_normal,
 )
-from cellpacker.drawing.annotations import draw_polarity_markers, draw_alignment_arrow
+from cellpacker.drawing.annotations import (
+    draw_polarity_markers,
+    draw_pack_terminals,
+    draw_alignment_arrow,
+)
 from cellpacker.routing.busbars import draw_parallel_busbars, draw_series_jumpers
 
 
@@ -155,6 +159,13 @@ def run() -> None:
 
     # Polarity markers
     draw_polarity_markers(doc, terminal_lookup, groups["polarity"], cfg)
+
+    # Pack-level terminal labels
+    if cfg.get("draw_pack_terminal_labels", True):
+        draw_pack_terminals(
+            doc, selected_by_series, terminal_lookup,
+            groups["polarity"], cfg, sketch_normal,
+        )
 
     # Busbars
     if cfg["draw_parallel_busbars"]:

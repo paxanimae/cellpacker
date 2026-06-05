@@ -46,6 +46,7 @@ DEFAULTS: dict = {
     "minus_busbar_z": 0.0,   # Z of − terminal busbar layer (cell base)
 
     # ── Polarity markers ──────────────────────────────────────────────────
+    "draw_pack_terminal_labels": True,   # large PACK+ / PACK- markers
     "draw_polarity_markers": True,
     "polarity_offset": 6.0,
     "draw_terminal_dots": True,

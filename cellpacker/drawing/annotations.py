@@ -34,6 +34,52 @@ def draw_polarity_markers(
             draw_circle_outline(doc, minus_pt, r, name + "_MINUS_DOT", group, color=(0.1, 0.1, 0.9))
 
 
+def draw_pack_terminals(
+    doc,
+    selected_by_series: dict,
+    terminal_lookup: dict,
+    group,
+    cfg: dict,
+    sketch_normal: App.Vector,
+) -> None:
+    """
+    Mark the pack-level output terminals:
+      PACK-  = unconnected minus rail of the first series group
+      PACK+  = unconnected plus rail of the last series group
+
+    Labels and circles are drawn at the centroid of each rail, offset
+    along the sketch normal to sit at the correct terminal face height.
+    """
+    sorted_s  = sorted(selected_by_series.keys())
+    s_first   = sorted_s[0]
+    s_last    = sorted_s[-1]
+    plus_off  = cfg.get("plus_busbar_z",  cfg.get("cell_height", 70.0))
+    minus_off = cfg.get("minus_busbar_z", 0.0)
+    dot_r     = cfg.get("terminal_dot_radius", 1.5) * 3.0  # larger circle
+
+    def _offset(pt: App.Vector, dist: float) -> App.Vector:
+        return App.Vector(
+            pt.x + sketch_normal.x * dist,
+            pt.y + sketch_normal.y * dist,
+            pt.z + sketch_normal.z * dist,
+        )
+
+    def _rail_centroid(cells, polarity: str, offset: float) -> App.Vector:
+        pts = [terminal_lookup[(c["series"], c["parallel"])][polarity] for c in cells]
+        cx = sum(p.x for p in pts) / len(pts)
+        cy = sum(p.y for p in pts) / len(pts)
+        cz = sum(p.z for p in pts) / len(pts)
+        return _offset(App.Vector(cx, cy, cz), offset)
+
+    neg_pt = _rail_centroid(selected_by_series[s_first], "minus", minus_off)
+    pos_pt = _rail_centroid(selected_by_series[s_last],  "plus",  plus_off)
+
+    draw_text(doc, neg_pt, "PACK-", "PackTerminal_NEG", group, color=(0.0, 0.0, 1.0))
+    draw_text(doc, pos_pt, "PACK+", "PackTerminal_POS", group, color=(1.0, 0.0, 0.0))
+    draw_circle_outline(doc, neg_pt, dot_r, "PackTerminal_NEG_ring", group, color=(0.0, 0.0, 1.0))
+    draw_circle_outline(doc, pos_pt, dot_r, "PackTerminal_POS_ring", group, color=(1.0, 0.0, 0.0))
+
+
 def draw_alignment_arrow(
     doc,
     sketch_obj,

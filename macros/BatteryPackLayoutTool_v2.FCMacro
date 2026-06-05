@@ -1,0 +1,1047 @@
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part
+import Draft
+import math
+import colorsys
+
+# =========================================================
+# SCRIPT DEFAULTS (GUI is pre-populated from these values)
+# =========================================================
+DEFAULTS = {
+    "mode": "pack",  # fit | pack
+    "cell_diameter": 21.5,
+    "clearance": 0.8,
+    "cell_height": 70.0,
+    "target_s": 20,
+    "target_p": 5,
+    "make_2d": True,
+    "make_3d": False,
+    "make_labels": True,
+    "draw_all_candidates": True,
+    "use_selected_edge_alignment": True,
+    "fallback_angle_deg": 0.0,
+    "edge_angle_offsets_deg": "0",  # comma-separated
+    "angles_deg": "0,5,10,15,20,25,30",
+    "colorize_series": True,
+    "draw_parallel_busbars": True,
+    "draw_series_jumpers": True,
+    "series_jumper_style": "paired",  # single | paired | rail
+    "snake_series_order": True,
+    "draw_busbar_solids": False,
+    "busbar_width": 8.0,
+    "busbar_thickness": 0.2,
+    "draw_alignment_arrow": True,
+    "alignment_arrow_length": 60.0,
+    "draw_polarity_markers": True,
+    "polarity_offset": 6.0,
+    "alternate_series_jumper_layers": True,
+    "top_layer_z": 0.5,
+    "bottom_layer_z": -0.5,
+    "prefer_shape_usage": True,
+    "shape_usage_weight": 2.5,
+    "compactness_weight": 1.0,
+    "center_bias_weight": 1.0,
+    "row_shift_weight": 2.5,
+    "boundary_margin_penalty_weight": 0.25,
+    "draw_terminal_dots": True,
+    "terminal_dot_radius": 1.5,
+    "top_layer_color": (0.10, 0.10, 0.10),
+    "bottom_layer_color": (0.45, 0.45, 0.45),
+    "cell_fill_transparency": 0,
+}
+
+
+def ensure_doc():
+    doc = App.ActiveDocument
+    if doc is None:
+        raise Exception("No active document.")
+    return doc
+
+
+def parse_float_list(text, fallback):
+    text = (text or "").strip()
+    if not text:
+        return list(fallback)
+    vals = []
+    for part in text.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        vals.append(float(part))
+    return vals if vals else list(fallback)
+
+
+# =========================================================
+# GUI
+# =========================================================
+def get_user_settings(defaults):
+    try:
+        from PySide import QtGui, QtCore
+    except Exception:
+        from PySide2 import QtWidgets as QtGui
+        from PySide2 import QtCore
+
+    class SettingsDialog(QtGui.QDialog):
+        def __init__(self, defaults):
+            super(SettingsDialog, self).__init__()
+            self.setWindowTitle("Battery Pack Layout Tool")
+            self.defaults = defaults
+            self.resize(760, 700)
+
+            layout = QtGui.QVBoxLayout(self)
+            tabs = QtGui.QTabWidget()
+            layout.addWidget(tabs)
+
+            # Helper tab
+            helper = QtGui.QWidget()
+            hbox = QtGui.QVBoxLayout(helper)
+            help_text = QtGui.QTextEdit()
+            help_text.setReadOnly(True)
+            help_text.setHtml("""
+            <h2>Battery Pack Layout Tool - quick help</h2>
+            <p><b>1.</b> Draw or import a closed sketch that represents the usable battery outline.</p>
+            <p><b>2.</b> Select the closed sketch. To align rows to a frame tube or edge, also Ctrl-select one straight edge before running the macro.</p>
+            <p><b>3.</b> Choose <b>Mode = pack</b> when you want an S/P battery layout with labels, polarity and busbars. Choose <b>Mode = fit</b> only when you want to see the maximum number of candidate cell positions inside the outline.</p>
+            <p><b>4.</b> Set cell diameter and clearance. Pitch = diameter + clearance. For 21700 cells, 21.0-21.5 mm diameter and 0.5-1.0 mm clearance is typical for planning.</p>
+            <p><b>5.</b> Set <b>Series groups (S)</b> and <b>Parallel cells (P)</b>. Example: 20s4p = 20 rows/groups, 4 cells per group.</p>
+            <p><b>Illustration:</b></p>
+            <pre>
+Candidate cells:      Selected 20s4p:       Busbars:
+  o o o o o             S01: + + + +          parallel rails within each S group
+   o o o o              S02: - - - -          series bridges between neighboring groups
+  o o o o o             S03: + + + +
+            </pre>
+            <h3>Important display note</h3>
+            <p>The macro now draws 2D cells as filled Part faces instead of Draft outline circles. This makes P/S group coloring visible in FreeCAD.</p>
+            """)
+            hbox.addWidget(help_text)
+            tabs.addTab(helper, "Help")
+
+            # General tab
+            general = QtGui.QWidget()
+            gform = QtGui.QFormLayout(general)
+            self.mode = QtGui.QComboBox()
+            self.mode.addItems(["fit", "pack"])
+            self.mode.setCurrentText(str(defaults["mode"]))
+            self.mode.setToolTip("fit = draw every cell position that fits inside the outline. pack = select target S x P cells and draw labels, polarity and busbars.")
+            gform.addRow("Mode", self.mode)
+
+            self.cell_diameter = QtGui.QDoubleSpinBox()
+            self.cell_diameter.setRange(1.0, 100.0)
+            self.cell_diameter.setDecimals(3)
+            self.cell_diameter.setValue(float(defaults["cell_diameter"]))
+            self.cell_diameter.setToolTip("Physical cell diameter used for collision checks. Use the real measured diameter, including wrapper if relevant.")
+            gform.addRow("Cell diameter (mm)", self.cell_diameter)
+
+            self.clearance = QtGui.QDoubleSpinBox()
+            self.clearance.setRange(0.0, 20.0)
+            self.clearance.setDecimals(3)
+            self.clearance.setValue(float(defaults["clearance"]))
+            self.clearance.setToolTip("Extra spacing between neighboring cells. Higher clearance means fewer cells fit but leaves room for fishpaper, glue, tolerances and heat shrink.")
+            gform.addRow("Clearance (mm)", self.clearance)
+
+            self.cell_height = QtGui.QDoubleSpinBox()
+            self.cell_height.setRange(1.0, 200.0)
+            self.cell_height.setDecimals(3)
+            self.cell_height.setValue(float(defaults["cell_height"]))
+            gform.addRow("Cell height (mm)", self.cell_height)
+
+            self.target_s = QtGui.QSpinBox()
+            self.target_s.setRange(1, 100)
+            self.target_s.setValue(int(defaults["target_s"]))
+            self.target_s.setToolTip("Number of series groups. 20 means a 20S pack.")
+            gform.addRow("Series groups (S)", self.target_s)
+
+            self.target_p = QtGui.QSpinBox()
+            self.target_p.setRange(1, 100)
+            self.target_p.setValue(int(defaults["target_p"]))
+            self.target_p.setToolTip("Number of cells in each parallel group. 4 means 4P.")
+            gform.addRow("Parallel cells (P)", self.target_p)
+
+            self.make_2d = QtGui.QCheckBox()
+            self.make_2d.setChecked(bool(defaults["make_2d"]))
+            gform.addRow("Draw 2D cells", self.make_2d)
+
+            self.make_3d = QtGui.QCheckBox()
+            self.make_3d.setChecked(bool(defaults["make_3d"]))
+            gform.addRow("Draw 3D cells", self.make_3d)
+
+            self.make_labels = QtGui.QCheckBox()
+            self.make_labels.setChecked(bool(defaults["make_labels"]))
+            gform.addRow("Draw S/P labels", self.make_labels)
+
+            self.draw_all_candidates = QtGui.QCheckBox()
+            self.draw_all_candidates.setChecked(bool(defaults["draw_all_candidates"]))
+            gform.addRow("Draw all candidate cells", self.draw_all_candidates)
+
+            tabs.addTab(general, "General")
+
+            # Alignment tab
+            align = QtGui.QWidget()
+            aform = QtGui.QFormLayout(align)
+            self.use_selected_edge_alignment = QtGui.QCheckBox()
+            self.use_selected_edge_alignment.setChecked(bool(defaults["use_selected_edge_alignment"]))
+            self.use_selected_edge_alignment.setToolTip("When enabled, the hex cell grid is aligned to the selected straight edge. Ctrl-select an edge together with the outline sketch.")
+            aform.addRow("Use selected edge alignment", self.use_selected_edge_alignment)
+
+            self.fallback_angle_deg = QtGui.QDoubleSpinBox()
+            self.fallback_angle_deg.setRange(-360.0, 360.0)
+            self.fallback_angle_deg.setDecimals(3)
+            self.fallback_angle_deg.setValue(float(defaults["fallback_angle_deg"]))
+            aform.addRow("Fallback angle (deg)", self.fallback_angle_deg)
+
+            self.edge_angle_offsets_deg = QtGui.QLineEdit(str(defaults["edge_angle_offsets_deg"]))
+            aform.addRow("Edge angle offsets (deg, CSV)", self.edge_angle_offsets_deg)
+
+            self.angles_deg = QtGui.QLineEdit(str(defaults["angles_deg"]))
+            self.angles_deg.setToolTip("Only used when selected-edge alignment is off. The macro tests these angles and keeps the best result.")
+            aform.addRow("Angle sweep (deg, CSV)", self.angles_deg)
+
+            self.draw_alignment_arrow = QtGui.QCheckBox()
+            self.draw_alignment_arrow.setChecked(bool(defaults["draw_alignment_arrow"]))
+            aform.addRow("Draw alignment arrow", self.draw_alignment_arrow)
+
+            self.alignment_arrow_length = QtGui.QDoubleSpinBox()
+            self.alignment_arrow_length.setRange(1.0, 1000.0)
+            self.alignment_arrow_length.setDecimals(2)
+            self.alignment_arrow_length.setValue(float(defaults["alignment_arrow_length"]))
+            aform.addRow("Alignment arrow length", self.alignment_arrow_length)
+
+            tabs.addTab(align, "Alignment")
+
+            # Routing tab
+            route = QtGui.QWidget()
+            rform = QtGui.QFormLayout(route)
+            self.colorize_series = QtGui.QCheckBox()
+            self.colorize_series.setChecked(bool(defaults["colorize_series"]))
+            rform.addRow("Colorize series", self.colorize_series)
+
+            self.snake_series_order = QtGui.QCheckBox()
+            self.snake_series_order.setChecked(bool(defaults["snake_series_order"]))
+            rform.addRow("Snake series order", self.snake_series_order)
+
+            self.draw_parallel_busbars = QtGui.QCheckBox()
+            self.draw_parallel_busbars.setChecked(bool(defaults["draw_parallel_busbars"]))
+            rform.addRow("Draw parallel busbars", self.draw_parallel_busbars)
+
+            self.draw_series_jumpers = QtGui.QCheckBox()
+            self.draw_series_jumpers.setChecked(bool(defaults["draw_series_jumpers"]))
+            self.draw_series_jumpers.setToolTip("Draw connections between neighboring series groups.")
+            rform.addRow("Draw series jumpers", self.draw_series_jumpers)
+
+            self.series_jumper_style = QtGui.QComboBox()
+            self.series_jumper_style.addItems(["paired", "rail", "single"])
+            self.series_jumper_style.setCurrentText(str(defaults.get("series_jumper_style", "paired")))
+            self.series_jumper_style.setToolTip("paired = connect each P cell to the matching P cell in the next S group. rail = connect nearest ends of the two rails. single = old behavior: one endpoint-to-endpoint jumper.")
+            rform.addRow("Series jumper style", self.series_jumper_style)
+
+            self.draw_busbar_solids = QtGui.QCheckBox()
+            self.draw_busbar_solids.setChecked(bool(defaults["draw_busbar_solids"]))
+            rform.addRow("Draw busbar solids", self.draw_busbar_solids)
+
+            self.busbar_width = QtGui.QDoubleSpinBox()
+            self.busbar_width.setRange(0.1, 100.0)
+            self.busbar_width.setDecimals(3)
+            self.busbar_width.setValue(float(defaults["busbar_width"]))
+            rform.addRow("Busbar width (mm)", self.busbar_width)
+
+            self.busbar_thickness = QtGui.QDoubleSpinBox()
+            self.busbar_thickness.setRange(0.01, 20.0)
+            self.busbar_thickness.setDecimals(3)
+            self.busbar_thickness.setValue(float(defaults["busbar_thickness"]))
+            rform.addRow("Busbar thickness (mm)", self.busbar_thickness)
+
+            self.draw_polarity_markers = QtGui.QCheckBox()
+            self.draw_polarity_markers.setChecked(bool(defaults["draw_polarity_markers"]))
+            rform.addRow("Draw polarity markers", self.draw_polarity_markers)
+
+            self.draw_terminal_dots = QtGui.QCheckBox()
+            self.draw_terminal_dots.setChecked(bool(defaults["draw_terminal_dots"]))
+            rform.addRow("Draw terminal dots", self.draw_terminal_dots)
+
+            self.terminal_dot_radius = QtGui.QDoubleSpinBox()
+            self.terminal_dot_radius.setRange(0.1, 20.0)
+            self.terminal_dot_radius.setDecimals(3)
+            self.terminal_dot_radius.setValue(float(defaults["terminal_dot_radius"]))
+            rform.addRow("Terminal dot radius (mm)", self.terminal_dot_radius)
+
+            self.polarity_offset = QtGui.QDoubleSpinBox()
+            self.polarity_offset.setRange(0.1, 50.0)
+            self.polarity_offset.setDecimals(3)
+            self.polarity_offset.setValue(float(defaults["polarity_offset"]))
+            rform.addRow("Polarity offset (mm)", self.polarity_offset)
+
+            self.alternate_series_jumper_layers = QtGui.QCheckBox()
+            self.alternate_series_jumper_layers.setChecked(bool(defaults["alternate_series_jumper_layers"]))
+            rform.addRow("Alternate series jumper layers", self.alternate_series_jumper_layers)
+
+            self.top_layer_z = QtGui.QDoubleSpinBox()
+            self.top_layer_z.setRange(-20.0, 20.0)
+            self.top_layer_z.setDecimals(3)
+            self.top_layer_z.setValue(float(defaults["top_layer_z"]))
+            rform.addRow("Top layer Z offset", self.top_layer_z)
+
+            self.bottom_layer_z = QtGui.QDoubleSpinBox()
+            self.bottom_layer_z.setRange(-20.0, 20.0)
+            self.bottom_layer_z.setDecimals(3)
+            self.bottom_layer_z.setValue(float(defaults["bottom_layer_z"]))
+            rform.addRow("Bottom layer Z offset", self.bottom_layer_z)
+
+            tabs.addTab(route, "Routing")
+
+            # Scoring tab
+            score = QtGui.QWidget()
+            sform = QtGui.QFormLayout(score)
+            self.prefer_shape_usage = QtGui.QCheckBox()
+            self.prefer_shape_usage.setChecked(bool(defaults["prefer_shape_usage"]))
+            sform.addRow("Prefer shape usage", self.prefer_shape_usage)
+
+            self.shape_usage_weight = QtGui.QDoubleSpinBox()
+            self.shape_usage_weight.setRange(0.0, 50.0)
+            self.shape_usage_weight.setDecimals(3)
+            self.shape_usage_weight.setValue(float(defaults["shape_usage_weight"]))
+            self.shape_usage_weight.setToolTip("Higher value rewards layouts that use more of the available shape. Mainly affects which valid target pack is chosen.")
+            sform.addRow("Shape usage weight", self.shape_usage_weight)
+
+            self.compactness_weight = QtGui.QDoubleSpinBox()
+            self.compactness_weight.setRange(0.0, 50.0)
+            self.compactness_weight.setDecimals(3)
+            self.compactness_weight.setValue(float(defaults["compactness_weight"]))
+            self.compactness_weight.setToolTip("Higher value prefers tighter, less spread-out selected cells.")
+            sform.addRow("Compactness weight", self.compactness_weight)
+
+            self.center_bias_weight = QtGui.QDoubleSpinBox()
+            self.center_bias_weight.setRange(0.0, 50.0)
+            self.center_bias_weight.setDecimals(3)
+            self.center_bias_weight.setValue(float(defaults["center_bias_weight"]))
+            self.center_bias_weight.setToolTip("Higher value prefers selected cells near the center of all possible cells.")
+            sform.addRow("Center bias weight", self.center_bias_weight)
+
+            self.row_shift_weight = QtGui.QDoubleSpinBox()
+            self.row_shift_weight.setRange(0.0, 50.0)
+            self.row_shift_weight.setDecimals(3)
+            self.row_shift_weight.setValue(float(defaults["row_shift_weight"]))
+            self.row_shift_weight.setToolTip("Higher value penalizes strong horizontal shifts between neighboring S rows.")
+            sform.addRow("Row shift weight", self.row_shift_weight)
+
+            self.boundary_margin_penalty_weight = QtGui.QDoubleSpinBox()
+            self.boundary_margin_penalty_weight.setRange(0.0, 50.0)
+            self.boundary_margin_penalty_weight.setDecimals(3)
+            self.boundary_margin_penalty_weight.setValue(float(defaults["boundary_margin_penalty_weight"]))
+            sform.addRow("Boundary margin penalty weight", self.boundary_margin_penalty_weight)
+
+            tabs.addTab(score, "Scoring")
+
+            buttons = QtGui.QDialogButtonBox(QtGui.QDialogButtonBox.Ok | QtGui.QDialogButtonBox.Cancel)
+            buttons.accepted.connect(self.accept)
+            buttons.rejected.connect(self.reject)
+            layout.addWidget(buttons)
+
+        def values(self):
+            return {
+                "mode": self.mode.currentText(),
+                "cell_diameter": self.cell_diameter.value(),
+                "clearance": self.clearance.value(),
+                "cell_height": self.cell_height.value(),
+                "target_s": self.target_s.value(),
+                "target_p": self.target_p.value(),
+                "make_2d": self.make_2d.isChecked(),
+                "make_3d": self.make_3d.isChecked(),
+                "make_labels": self.make_labels.isChecked(),
+                "draw_all_candidates": self.draw_all_candidates.isChecked(),
+                "use_selected_edge_alignment": self.use_selected_edge_alignment.isChecked(),
+                "fallback_angle_deg": self.fallback_angle_deg.value(),
+                "edge_angle_offsets_deg": self.edge_angle_offsets_deg.text(),
+                "angles_deg": self.angles_deg.text(),
+                "colorize_series": self.colorize_series.isChecked(),
+                "draw_parallel_busbars": self.draw_parallel_busbars.isChecked(),
+                "draw_series_jumpers": self.draw_series_jumpers.isChecked(),
+                "series_jumper_style": self.series_jumper_style.currentText(),
+                "snake_series_order": self.snake_series_order.isChecked(),
+                "draw_busbar_solids": self.draw_busbar_solids.isChecked(),
+                "busbar_width": self.busbar_width.value(),
+                "busbar_thickness": self.busbar_thickness.value(),
+                "draw_alignment_arrow": self.draw_alignment_arrow.isChecked(),
+                "alignment_arrow_length": self.alignment_arrow_length.value(),
+                "draw_polarity_markers": self.draw_polarity_markers.isChecked(),
+                "polarity_offset": self.polarity_offset.value(),
+                "alternate_series_jumper_layers": self.alternate_series_jumper_layers.isChecked(),
+                "top_layer_z": self.top_layer_z.value(),
+                "bottom_layer_z": self.bottom_layer_z.value(),
+                "prefer_shape_usage": self.prefer_shape_usage.isChecked(),
+                "shape_usage_weight": self.shape_usage_weight.value(),
+                "compactness_weight": self.compactness_weight.value(),
+                "center_bias_weight": self.center_bias_weight.value(),
+                "row_shift_weight": self.row_shift_weight.value(),
+                "boundary_margin_penalty_weight": self.boundary_margin_penalty_weight.value(),
+                "draw_terminal_dots": self.draw_terminal_dots.isChecked(),
+                "terminal_dot_radius": self.terminal_dot_radius.value(),
+                "top_layer_color": DEFAULTS["top_layer_color"],
+                "bottom_layer_color": DEFAULTS["bottom_layer_color"],
+            }
+
+    dlg = SettingsDialog(defaults)
+    if dlg.exec_():
+        return dlg.values()
+    return None
+
+
+# =========================================================
+# SELECTION HELPERS
+# =========================================================
+def get_selected_sketch_and_edge():
+    sel_ex = Gui.Selection.getSelectionEx()
+    if not sel_ex:
+        raise Exception("Select a sketch, and optionally one straight edge for alignment.")
+
+    sketch_obj = None
+    selected_edge = None
+
+    for s in sel_ex:
+        if hasattr(s.Object, "Shape") and s.Object.Shape.Wires:
+            sketch_obj = s.Object
+            break
+
+    if sketch_obj is None:
+        raise Exception("Could not find a valid selected object with closed wires.")
+
+    for s in sel_ex:
+        for sub in s.SubObjects:
+            if isinstance(sub, Part.Edge) and len(sub.Vertexes) == 2:
+                selected_edge = sub
+                return sketch_obj, selected_edge
+
+    return sketch_obj, None
+
+
+def get_edge_angle_in_local_coords(sketch_obj, edge, fallback_angle_deg=0.0):
+    if edge is None:
+        return fallback_angle_deg
+
+    p1_global = edge.Vertexes[0].Point
+    p2_global = edge.Vertexes[1].Point
+    p1_local = sketch_obj.Placement.inverse().multVec(p1_global)
+    p2_local = sketch_obj.Placement.inverse().multVec(p2_global)
+    dx = p2_local.x - p1_local.x
+    dy = p2_local.y - p1_local.y
+
+    if abs(dx) < 1e-9 and abs(dy) < 1e-9:
+        raise Exception("Selected edge has zero length in local coordinates.")
+
+    return math.degrees(math.atan2(dy, dx))
+
+
+# =========================================================
+# GEOMETRY HELPERS
+# =========================================================
+def get_local_face(sketch_obj):
+    shape_global = sketch_obj.Shape
+    if not shape_global.Wires:
+        raise Exception("Selected object has no wires. Select a closed sketch.")
+
+    shape_local = shape_global.copy()
+    shape_local.Placement = sketch_obj.Placement.inverse().multiply(shape_local.Placement)
+
+    closed_wire = None
+    for w in shape_local.Wires:
+        if w.isClosed():
+            closed_wire = w
+            break
+
+    if closed_wire is None:
+        raise Exception("No closed wire found in selected sketch.")
+
+    return Part.Face(closed_wire)
+
+
+def rotate_2d(x, y, angle_deg):
+    a = math.radians(angle_deg)
+    ca = math.cos(a)
+    sa = math.sin(a)
+    return (x * ca - y * sa, x * sa + y * ca)
+
+
+def inverse_rotate_2d(x, y, angle_deg):
+    return rotate_2d(x, y, -angle_deg)
+
+
+def to_global(sketch_obj, x, y, z=0.0):
+    return sketch_obj.Placement.multVec(App.Vector(x, y, z))
+
+
+def point_inside_local_face(face, x, y, tol=0.05):
+    return face.isInside(App.Vector(x, y, 0), tol, True)
+
+
+def circle_fits(face, cx, cy, r, samples=16):
+    if not point_inside_local_face(face, cx, cy):
+        return False
+    for i in range(samples):
+        t = 2 * math.pi * i / samples
+        px = cx + r * math.cos(t)
+        py = cy + r * math.sin(t)
+        if not point_inside_local_face(face, px, py):
+            return False
+    return True
+
+
+def point_to_boundary_distance(face, x, y):
+    try:
+        v = Part.Vertex(App.Vector(x, y, 0))
+        dist = face.distToShape(v)[0]
+        return float(dist)
+    except Exception:
+        return 0.0
+
+
+# =========================================================
+# SCORING / SELECTION
+# =========================================================
+def cluster_rows(points, pitch_y, tol=None):
+    if not points:
+        return []
+    if tol is None:
+        tol = pitch_y * 0.35
+
+    pts = sorted(points, key=lambda p: p[1])
+    rows = []
+    current = [pts[0]]
+    for p in pts[1:]:
+        if abs(p[1] - current[-1][1]) <= tol:
+            current.append(p)
+        else:
+            rows.append(current)
+            current = [p]
+    rows.append(current)
+
+    for row in rows:
+        row.sort(key=lambda p: p[0])
+    return rows
+
+
+def score_selected(face, selected, chosen_rows, points, cfg):
+    xs = [c["x"] for c in selected]
+    ys = [c["y"] for c in selected]
+    width = max(xs) - min(xs)
+    height = max(ys) - min(ys)
+
+    global_center_x = sum(p[0] for p in points) / len(points)
+    global_center_y = sum(p[1] for p in points) / len(points)
+    center_x = sum(xs) / len(xs)
+    center_y = sum(ys) / len(ys)
+
+    row_centers = [sum(p[0] for p in r) / len(r) for r in chosen_rows]
+    row_shift_penalty = sum(abs(row_centers[i] - row_centers[i - 1]) for i in range(1, len(row_centers)))
+
+    boundary_margins = [point_to_boundary_distance(face, c["x"], c["y"]) for c in selected]
+    avg_boundary_margin = sum(boundary_margins) / len(boundary_margins) if boundary_margins else 0.0
+
+    compact_term = (width + height) * cfg["compactness_weight"]
+    center_term = (abs(center_x - global_center_x) + abs(center_y - global_center_y)) * cfg["center_bias_weight"]
+    row_term = row_shift_penalty * cfg["row_shift_weight"]
+    boundary_term = avg_boundary_margin * cfg["boundary_margin_penalty_weight"]
+
+    # Reward using space, which reduces score
+    shape_usage_term = 0.0
+    if cfg["prefer_shape_usage"]:
+        shape_usage_term = -len(selected) * cfg["shape_usage_weight"]
+
+    return compact_term + center_term + row_term + boundary_term + shape_usage_term
+
+
+def select_compact_sp(face, points, pitch_y, target_s, target_p, cfg):
+    rows = cluster_rows(points, pitch_y)
+    if len(rows) < target_s:
+        return None, rows, []
+
+    valid_windows = []
+    for start in range(0, len(rows) - target_s + 1):
+        window = rows[start:start + target_s]
+        if any(len(r) < target_p for r in window):
+            continue
+
+        chosen_rows = []
+        selected = []
+        global_center_x = sum(p[0] for p in points) / len(points)
+
+        for s_idx, row in enumerate(window, start=1):
+            ranked = sorted(row, key=lambda p: abs(p[0] - global_center_x))
+            chosen = sorted(ranked[:target_p], key=lambda p: p[0])
+            chosen_rows.append(chosen)
+            for p_idx, pt in enumerate(chosen, start=1):
+                selected.append({
+                    "series": s_idx,
+                    "parallel": p_idx,
+                    "x": pt[0],
+                    "y": pt[1],
+                })
+
+        score = score_selected(face, selected, chosen_rows, points, cfg)
+        valid_windows.append((score, selected))
+
+    if not valid_windows:
+        valid_rows = [r for r in rows if len(r) >= target_p]
+        return None, rows, valid_rows
+
+    valid_windows.sort(key=lambda x: x[0])
+    best_selected = valid_windows[0][1]
+    valid_rows = [r for r in rows if len(r) >= target_p]
+    return best_selected, rows, valid_rows
+
+
+def build_selected_by_series(selected_cells, snake=False):
+    selected_by_series = {}
+    for c in selected_cells or []:
+        selected_by_series.setdefault(c["series"], []).append(dict(c))
+
+    for s in selected_by_series:
+        row = sorted(selected_by_series[s], key=lambda x: x["x"])
+        if snake and (s % 2 == 0):
+            row.reverse()
+        for idx, cell in enumerate(row, start=1):
+            cell["parallel"] = idx
+        selected_by_series[s] = row
+
+    return selected_by_series
+
+
+# =========================================================
+# DRAW HELPERS
+# =========================================================
+def make_or_get_group(doc, name):
+    grp = doc.getObject(name)
+    if grp is None:
+        grp = doc.addObject("App::DocumentObjectGroup", name)
+    return grp
+
+
+def hsv_to_rgb(h, s, v):
+    return tuple(float(c) for c in colorsys.hsv_to_rgb(h, s, v))
+
+
+def get_series_color(series_idx, total_series):
+    if total_series <= 1:
+        return (0.8, 0.2, 0.2)
+    h = float(series_idx - 1) / float(total_series)
+    return hsv_to_rgb(h, 0.65, 0.95)
+
+
+def apply_view_color(obj_view_target, rgb):
+    if hasattr(obj_view_target, "ViewObject"):
+        for attr in ("LineColor", "ShapeColor", "TextColor"):
+            try:
+                setattr(obj_view_target.ViewObject, attr, rgb)
+            except Exception:
+                pass
+
+
+def apply_busbar_style(obj_view_target, rgb):
+    apply_view_color(obj_view_target, rgb)
+    if hasattr(obj_view_target, "ViewObject"):
+        try:
+            obj_view_target.ViewObject.LineWidth = 4.0
+        except Exception:
+            pass
+
+
+def draw_circle(doc, global_pt, radius, rotation, label, group, color=None):
+    # Filled 2D cell disk. Draft circles are often wire-only, so ShapeColor is not visible.
+    # A Part face gives reliable colorized P/S groups in FreeCAD.
+    circle_edge = Part.makeCircle(radius, global_pt, App.Vector(0, 0, 1))
+    face = Part.Face(Part.Wire([circle_edge]))
+    obj_disk = doc.addObject("Part::Feature", label)
+    obj_disk.Shape = face
+    group.addObject(obj_disk)
+    if color is not None:
+        apply_view_color(obj_disk, color)
+    try:
+        obj_disk.ViewObject.DisplayMode = "Flat Lines"
+    except Exception:
+        pass
+    return obj_disk
+
+
+def draw_cylinder(doc, global_pt, radius, height, rotation, label, group, color=None):
+    cyl = doc.addObject("Part::Cylinder", label)
+    cyl.Radius = radius
+    cyl.Height = height
+    cyl.Placement = App.Placement(global_pt, rotation)
+    group.addObject(cyl)
+    if color is not None:
+        apply_view_color(cyl, color)
+    return cyl
+
+
+def draw_text(doc, global_pt, text, label, group, color=None):
+    txt = Draft.makeText([text], point=global_pt)
+    txt.Label = label
+    group.addObject(txt)
+    if color is not None:
+        apply_view_color(txt, color)
+    return txt
+
+
+def draw_polyline(doc, global_points, label, group, color=None, closed=False):
+    wire = Draft.makeWire(global_points, closed=closed, face=False)
+    wire.Label = label
+    group.addObject(wire)
+    if color is not None:
+        apply_busbar_style(wire, color)
+    return wire
+
+
+def draw_busbar_strip(doc, p1, p2, width, thickness, label, group, color=None):
+    v = p2.sub(p1)
+    length = v.Length
+    if length < 0.001:
+        return None
+
+    ux = App.Vector(v.x / length, v.y / length, v.z / length)
+    up = App.Vector(0, 0, 1)
+    side = up.cross(ux)
+    if side.Length < 0.001:
+        side = App.Vector(1, 0, 0)
+    side.normalize()
+    half_w = width / 2.0
+
+    a = p1.add(side.multiply(half_w))
+    b = p1.sub(side.multiply(half_w))
+    c = p2.sub(side.multiply(half_w))
+    d = p2.add(side.multiply(half_w))
+
+    poly = Part.makePolygon([a, b, c, d, a])
+    face = Part.Face(poly)
+    solid = face.extrude(App.Vector(0, 0, thickness))
+
+    obj_bar = doc.addObject("Part::Feature", label)
+    obj_bar.Shape = solid
+    group.addObject(obj_bar)
+    if color is not None:
+        apply_view_color(obj_bar, color)
+    return obj_bar
+
+
+def draw_busbar_path(doc, points, label, group, color=None, solid=False, width=8.0, thickness=0.2):
+    if len(points) < 2:
+        return []
+    created = []
+    if solid:
+        for i in range(len(points) - 1):
+            seg = draw_busbar_strip(doc, points[i], points[i + 1], width, thickness, f"{label}_{i+1:02d}", group, color=color)
+            if seg is not None:
+                created.append(seg)
+    else:
+        created.append(draw_polyline(doc, points, label, group, color=color))
+    return created
+
+
+def draw_alignment_arrow(doc, sketch_obj, angle_deg, label, group, length):
+    start_local = App.Vector(0, 0, 0)
+    end_local = App.Vector(length, 0, 0)
+    sx, sy = rotate_2d(start_local.x, start_local.y, angle_deg)
+    ex, ey = rotate_2d(end_local.x, end_local.y, angle_deg)
+    p1 = to_global(sketch_obj, sx, sy, 0)
+    p2 = to_global(sketch_obj, ex, ey, 0)
+    draw_polyline(doc, [p1, p2], label + "_shaft", group, color=(0.0, 0.6, 0.0))
+
+    head_len = length * 0.18
+    head_ang = 25.0
+    vx = ex - sx
+    vy = ey - sy
+    vlen = math.sqrt(vx * vx + vy * vy)
+    if vlen > 1e-9:
+        ux = vx / vlen
+        uy = vy / vlen
+        left_dx, left_dy = rotate_2d(-head_len * ux, -head_len * uy, head_ang)
+        right_dx, right_dy = rotate_2d(-head_len * ux, -head_len * uy, -head_ang)
+        p_left = to_global(sketch_obj, ex + left_dx, ey + left_dy, 0)
+        p_right = to_global(sketch_obj, ex + right_dx, ey + right_dy, 0)
+        draw_polyline(doc, [p2, p_left], label + "_headL", group, color=(0.0, 0.6, 0.0))
+        draw_polyline(doc, [p2, p_right], label + "_headR", group, color=(0.0, 0.6, 0.0))
+
+
+def get_cell_polarity_positions(cell, polarity_offset):
+    x = cell["x"]
+    y = cell["y"]
+    if cell["series"] % 2 == 1:
+        plus_local = (x, y + polarity_offset)
+        minus_local = (x, y - polarity_offset)
+    else:
+        plus_local = (x, y - polarity_offset)
+        minus_local = (x, y + polarity_offset)
+    return plus_local, minus_local
+
+
+def draw_terminal_dot(doc, global_pt, radius, group, color, label):
+    circ = Draft.makeCircle(radius, placement=App.Placement(global_pt, App.Rotation()))
+    circ.Label = label
+    group.addObject(circ)
+    apply_view_color(circ, color)
+    return circ
+
+
+
+def nearest_pair(points_a, points_b):
+    best = None
+    for a in points_a:
+        for b in points_b:
+            d = a.distanceToPoint(b)
+            if best is None or d < best[0]:
+                best = (d, a, b)
+    if best is None:
+        return None, None
+    return best[1], best[2]
+
+def with_z(pt, zoff):
+    return App.Vector(pt.x, pt.y, pt.z + zoff)
+
+# =========================================================
+# MAIN
+# =========================================================
+def run():
+    doc = ensure_doc()
+    cfg = get_user_settings(DEFAULTS)
+    if cfg is None:
+        print("Cancelled.")
+        return
+
+    obj, alignment_edge = get_selected_sketch_and_edge()
+    face = get_local_face(obj)
+
+    bbox = face.BoundBox
+    radius = cfg["cell_diameter"] / 2.0
+    pitch_x = cfg["cell_diameter"] + cfg["clearance"]
+    pitch_y = pitch_x * math.sqrt(3) / 2.0
+
+    if cfg["use_selected_edge_alignment"]:
+        base_angle = get_edge_angle_in_local_coords(obj, alignment_edge, fallback_angle_deg=cfg["fallback_angle_deg"])
+        angle_list = [base_angle + d for d in parse_float_list(cfg["edge_angle_offsets_deg"], [0.0])]
+        print(f"Using selected edge base alignment: {base_angle:.2f} deg")
+    else:
+        angle_list = parse_float_list(cfg["angles_deg"], [0, 5, 10, 15, 20, 25, 30])
+
+    best = None
+    for angle in angle_list:
+        corners = [
+            (bbox.XMin, bbox.YMin),
+            (bbox.XMin, bbox.YMax),
+            (bbox.XMax, bbox.YMin),
+            (bbox.XMax, bbox.YMax),
+        ]
+        rcorners = [rotate_2d(x, y, angle) for x, y in corners]
+
+        min_x = min(c[0] for c in rcorners) - pitch_x
+        max_x = max(c[0] for c in rcorners) + pitch_x
+        min_y = min(c[1] for c in rcorners) - pitch_y
+        max_y = max(c[1] for c in rcorners) + pitch_y
+
+        points = []
+        row_idx = 0
+        y = min_y
+        while y <= max_y:
+            x_offset = 0 if row_idx % 2 == 0 else pitch_x / 2.0
+            x = min_x + x_offset
+            while x <= max_x:
+                lx, ly = inverse_rotate_2d(x, y, angle)
+                if circle_fits(face, lx, ly, radius):
+                    points.append((lx, ly))
+                x += pitch_x
+            y += pitch_y
+            row_idx += 1
+
+        selected, rows, valid_rows = select_compact_sp(face, points, pitch_y, cfg["target_s"], cfg["target_p"], cfg)
+
+        result = {
+            "angle": angle,
+            "points": points,
+            "rows": rows,
+            "valid_rows": valid_rows,
+            "selected": selected,
+            "selected_count": 0 if selected is None else len(selected),
+        }
+
+        if best is None:
+            best = result
+        else:
+            if cfg["mode"] == "fit":
+                if len(result["points"]) > len(best["points"]):
+                    best = result
+            else:
+                if result["selected_count"] > best["selected_count"]:
+                    best = result
+                elif result["selected_count"] == best["selected_count"] and len(result["points"]) > len(best["points"]):
+                    best = result
+
+    print("----- Battery packing result -----")
+    print(f"Mode: {cfg['mode']}")
+    print(f"Best angle: {best['angle']:.2f} deg")
+    print(f"Total candidate cells inside shape: {len(best['points'])}")
+    print(f"Rows found: {len(best['rows'])}")
+    print(f"Rows with >= {cfg['target_p']} cells: {len(best['valid_rows'])}")
+    print(f"Selected cells for {cfg['target_s']}s{cfg['target_p']}p: {best['selected_count']} / {cfg['target_s'] * cfg['target_p']}")
+
+    if cfg["mode"] == "pack" and best["selected_count"] < cfg["target_s"] * cfg["target_p"]:
+        print(f"WARNING: Shape cannot fit a full {cfg['target_s']}s{cfg['target_p']}p pack with current settings.")
+
+    rotation = obj.Placement.Rotation
+
+    if cfg["mode"] == "fit":
+        grp_fit = make_or_get_group(doc, "BatteryFit_AllCandidates")
+        for i, pt in enumerate(best["points"], start=1):
+            global_pt = to_global(obj, pt[0], pt[1])
+            if cfg["make_2d"]:
+                draw_circle(doc, global_pt, radius, rotation, f"CAND_{i:03d}", grp_fit)
+            if cfg["make_3d"]:
+                draw_cylinder(doc, global_pt, radius, cfg["cell_height"], rotation, f"CAND_{i:03d}_3D", grp_fit)
+        doc.recompute()
+        Gui.ActiveDocument.ActiveView.fitAll()
+        return
+
+    root_name = f"BatteryPack_{cfg['target_s']}s{cfg['target_p']}p"
+    grp_root = make_or_get_group(doc, root_name)
+    grp_all = make_or_get_group(doc, root_name + "_AllCandidates")
+    grp_pack = make_or_get_group(doc, root_name + "_Selected")
+    grp_bus = make_or_get_group(doc, root_name + "_Busbars")
+    grp_pol = make_or_get_group(doc, root_name + "_Polarity")
+    grp_dir = make_or_get_group(doc, root_name + "_Direction")
+
+    for grp in [grp_pack, grp_bus, grp_pol, grp_dir]:
+        try:
+            grp_root.addObject(grp)
+        except Exception:
+            pass
+
+    if cfg["draw_all_candidates"]:
+        try:
+            grp_root.addObject(grp_all)
+        except Exception:
+            pass
+        for i, pt in enumerate(best["points"], start=1):
+            global_pt = to_global(obj, pt[0], pt[1])
+            if cfg["make_2d"]:
+                draw_circle(doc, global_pt, radius, rotation, f"CAND_{i:03d}", grp_all, color=(0.70, 0.70, 0.70))
+
+    if cfg["draw_alignment_arrow"]:
+        draw_alignment_arrow(doc, obj, best["angle"], "PackDirection", grp_dir, cfg["alignment_arrow_length"])
+
+    series_groups = {}
+    for s in range(1, cfg["target_s"] + 1):
+        sg = make_or_get_group(doc, f"{root_name}_Series_{s:02d}")
+        try:
+            grp_pack.addObject(sg)
+        except Exception:
+            pass
+        series_groups[s] = sg
+
+    selected_by_series = build_selected_by_series(best["selected"], snake=cfg["snake_series_order"])
+
+    terminal_lookup = {}
+
+    # Draw cells, labels, polarity
+    for s in range(1, cfg["target_s"] + 1):
+        row = selected_by_series.get(s, [])
+        color = get_series_color(s, cfg["target_s"]) if cfg["colorize_series"] else (0.8, 0.8, 0.8)
+        target_group = series_groups[s]
+        for cell in row:
+            global_pt = to_global(obj, cell["x"], cell["y"])
+            name = f"S{cell['series']:02d}_P{cell['parallel']:02d}"
+            if cfg["make_2d"]:
+                draw_circle(doc, global_pt, radius, rotation, name, target_group, color=color)
+            if cfg["make_3d"]:
+                draw_cylinder(doc, global_pt, radius, cfg["cell_height"], rotation, name + "_3D", target_group, color=color)
+            if cfg["make_labels"]:
+                draw_text(doc, global_pt, f"{cell['series']}/{cell['parallel']}", name + "_TXT", target_group, color=color)
+
+            plus_local, minus_local = get_cell_polarity_positions(cell, cfg["polarity_offset"])
+            plus_pt = to_global(obj, plus_local[0], plus_local[1], 0)
+            minus_pt = to_global(obj, minus_local[0], minus_local[1], 0)
+            terminal_lookup[(cell["series"], cell["parallel"])] = {"plus": plus_pt, "minus": minus_pt, "cell": cell}
+
+            if cfg["draw_polarity_markers"]:
+                draw_text(doc, plus_pt, "+", name + "_PLUS", grp_pol, color=(0.8, 0.0, 0.0))
+                draw_text(doc, minus_pt, "-", name + "_MINUS", grp_pol, color=(0.0, 0.0, 0.8))
+
+            if cfg["draw_terminal_dots"]:
+                draw_terminal_dot(doc, plus_pt, cfg["terminal_dot_radius"], grp_pol, (0.9, 0.1, 0.1), name + "_PLUS_DOT")
+                draw_terminal_dot(doc, minus_pt, cfg["terminal_dot_radius"], grp_pol, (0.1, 0.1, 0.9), name + "_MINUS_DOT")
+
+    # Parallel busbars: connect like polarity inside each series group
+    if cfg["draw_parallel_busbars"]:
+        grp_bus_parallel = make_or_get_group(doc, root_name + "_Busbars_Parallel")
+        try:
+            grp_bus.addObject(grp_bus_parallel)
+        except Exception:
+            pass
+
+        for s in range(1, cfg["target_s"] + 1):
+            row = selected_by_series.get(s, [])
+            if len(row) < 2:
+                continue
+            color = get_series_color(s, cfg["target_s"]) if cfg["colorize_series"] else (0.2, 0.2, 0.8)
+
+            plus_pts = []
+            minus_pts = []
+            for cell in row:
+                key = (cell["series"], cell["parallel"])
+                plus_pts.append(terminal_lookup[key]["plus"])
+                minus_pts.append(terminal_lookup[key]["minus"])
+
+            draw_busbar_path(doc, plus_pts, f"BUS_PAR_PLUS_S{s:02d}", grp_bus_parallel, color=color, solid=cfg["draw_busbar_solids"], width=cfg["busbar_width"], thickness=cfg["busbar_thickness"])
+            draw_busbar_path(doc, minus_pts, f"BUS_PAR_MINUS_S{s:02d}", grp_bus_parallel, color=color, solid=cfg["draw_busbar_solids"], width=cfg["busbar_width"], thickness=cfg["busbar_thickness"])
+
+    # Series jumpers: connect + of one group to - of next group
+    if cfg["draw_series_jumpers"]:
+        grp_bus_series = make_or_get_group(doc, root_name + "_Busbars_Series")
+        try:
+            grp_bus.addObject(grp_bus_series)
+        except Exception:
+            pass
+
+        for s in range(1, cfg["target_s"]):
+            row_a = selected_by_series.get(s, [])
+            row_b = selected_by_series.get(s + 1, [])
+            if not row_a or not row_b:
+                continue
+
+            if cfg["alternate_series_jumper_layers"]:
+                zoff = cfg["top_layer_z"] if (s % 2 == 1) else cfg["bottom_layer_z"]
+                color = cfg["top_layer_color"] if (s % 2 == 1) else cfg["bottom_layer_color"]
+            else:
+                zoff = 0.0
+                color = (0.1, 0.1, 0.1)
+
+            style = cfg.get("series_jumper_style", "paired")
+
+            if style == "single":
+                # Original behavior: one jumper from the end of S to the start of S+1.
+                a = row_a[-1]
+                b = row_b[0]
+                term_a = terminal_lookup[(a["series"], a["parallel"])] ["plus"]
+                term_b = terminal_lookup[(b["series"], b["parallel"])] ["minus"]
+                draw_busbar_path(doc, [with_z(term_a, zoff), with_z(term_b, zoff)], f"BUS_SERIES_{s:02d}_{s+1:02d}", grp_bus_series, color=color, solid=cfg["draw_busbar_solids"], width=cfg["busbar_width"], thickness=cfg["busbar_thickness"])
+
+            elif style == "rail":
+                # Connect the nearest endpoints of the + rail of S and the - rail of S+1.
+                plus_pts = [terminal_lookup[(c["series"], c["parallel"])] ["plus"] for c in row_a]
+                minus_pts = [terminal_lookup[(c["series"], c["parallel"])] ["minus"] for c in row_b]
+                p1, p2 = nearest_pair(plus_pts, minus_pts)
+                if p1 is not None:
+                    draw_busbar_path(doc, [with_z(p1, zoff), with_z(p2, zoff)], f"BUS_SERIES_RAIL_{s:02d}_{s+1:02d}", grp_bus_series, color=color, solid=cfg["draw_busbar_solids"], width=cfg["busbar_width"], thickness=cfg["busbar_thickness"])
+
+            else:
+                # Better default for P groups: connect + of every cell in S to the matching - cell in S+1.
+                # This makes the full parallel group-to-group series connection visible instead of only one wire.
+                n = min(len(row_a), len(row_b))
+                for idx in range(n):
+                    a = row_a[idx]
+                    b = row_b[idx]
+                    term_a = terminal_lookup[(a["series"], a["parallel"])] ["plus"]
+                    term_b = terminal_lookup[(b["series"], b["parallel"])] ["minus"]
+                    draw_busbar_path(doc, [with_z(term_a, zoff), with_z(term_b, zoff)], f"BUS_SERIES_PAIR_{s:02d}_{s+1:02d}_P{idx+1:02d}", grp_bus_series, color=color, solid=cfg["draw_busbar_solids"], width=cfg["busbar_width"], thickness=cfg["busbar_thickness"])
+
+    doc.recompute()
+    Gui.ActiveDocument.ActiveView.fitAll()
+
+
+run()

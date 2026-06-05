@@ -10,10 +10,18 @@ from __future__ import annotations
 from cellpacker.defaults import DEFAULTS, CELL_PRESETS
 
 
-def get_user_settings(defaults: dict = DEFAULTS) -> dict | None:
+def get_user_settings(
+    defaults: dict = DEFAULTS,
+    preview_fn=None,
+    cleanup_fn=None,
+) -> dict | None:
     """
     Show the settings dialog and return the chosen configuration dict,
     or ``None`` if the user cancelled.
+
+    *preview_fn(cfg)*  – called when the user clicks Preview; draws the
+                         current layout into the FreeCAD document.
+    *cleanup_fn()*     – called when the user cancels; removes the preview.
     """
     try:
         from PySide2 import QtWidgets as Qt, QtCore  # noqa: F401
@@ -45,7 +53,27 @@ def get_user_settings(defaults: dict = DEFAULTS) -> dict | None:
             )
             btns.accepted.connect(self.accept)
             btns.rejected.connect(self.reject)
+
+            if preview_fn is not None:
+                self._preview_btn = btns.addButton(
+                    "Preview", Qt.QDialogButtonBox.ActionRole
+                )
+                self._preview_btn.setToolTip(
+                    "Run layout with current settings and draw into the viewport.\n"
+                    "Click again after changing settings to update."
+                )
+                self._preview_btn.clicked.connect(self._on_preview)
+
             root.addWidget(btns)
+
+        def _on_preview(self):
+            if preview_fn is not None:
+                preview_fn(self.values())
+
+        def reject(self):
+            if cleanup_fn is not None:
+                cleanup_fn()
+            super().reject()
 
         # ── Tab builders ──────────────────────────────────────────────────
 

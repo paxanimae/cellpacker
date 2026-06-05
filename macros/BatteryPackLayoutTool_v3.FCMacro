@@ -48,6 +48,7 @@ from cellpacker.drawing.cells import (
     draw_candidate_cells,
     draw_all_selected_cells,
     get_sketch_normal,
+    _delete_tree,
 )
 from cellpacker.drawing.annotations import (
     draw_polarity_markers,
@@ -62,126 +63,122 @@ from cellpacker.routing.busbars import draw_parallel_busbars, draw_series_jumper
 def run() -> None:
     doc = ensure_active_doc()
 
-    cfg = get_user_settings(DEFAULTS)
+    # ── Selection + geometry (done once, shared by preview and final draw) ──
+    sketch_obj, alignment_edge = get_selected_sketch_and_edge()
+    face          = get_local_face(sketch_obj)
+    bbox          = face.BoundBox
+    rotation      = sketch_obj.Placement.Rotation
+    sketch_normal = get_sketch_normal(sketch_obj)
+
+    # Track the last preview root so Cancel can clean it up.
+    _last_root: list[str] = []
+
+    def _draw(cfg: dict) -> None:
+        """Run layout + draw for *cfg*.  Called by Preview button and OK."""
+        params = grid_params_from_config(cfg)
+
+        # Build angle list
+        if cfg["use_selected_edge_alignment"]:
+            base_angle = get_edge_angle_in_local_coords(
+                sketch_obj, alignment_edge,
+                fallback_angle_deg=cfg["fallback_angle_deg"],
+            )
+            angle_list = [
+                base_angle + d
+                for d in parse_float_list(cfg["edge_angle_offsets_deg"], [0.0])
+            ]
+            print(f"BatteryPackLayoutTool: edge base angle = {base_angle:.2f}°")
+        else:
+            angle_list = parse_float_list(cfg["angles_deg"], [0, 5, 10, 15, 20, 25, 30])
+
+        best = sweep_angles(face, bbox, angle_list, params, cfg)
+
+        print("─" * 50)
+        print(f"Mode             : {cfg['mode']}")
+        print(f"Best angle       : {best['angle']:.2f}°")
+        print(f"Candidate cells  : {len(best['points'])}")
+        print(f"Selected         : {best['selected_count']} / "
+              f"{cfg['target_s'] * cfg['target_p']}")
+        if cfg["mode"] == "pack" and best["selected_count"] < cfg["target_s"] * cfg["target_p"]:
+            print(f"WARNING: cannot fit a full "
+                  f"{cfg['target_s']}s{cfg['target_p']}p pack.")
+        print("─" * 50)
+
+        # ── Fit mode ─────────────────────────────────────────────────────
+        if cfg["mode"] == "fit":
+            grp = make_or_get_group(doc, "BatteryFit_AllCandidates")
+            draw_candidate_cells(doc, sketch_obj, best["points"],
+                                 params.radius, rotation, grp, cfg)
+            doc.recompute()
+            Gui.ActiveDocument.ActiveView.fitAll()
+            return
+
+        # ── Pack mode ─────────────────────────────────────────────────────
+        new_root = f"BatteryPack_{cfg['target_s']}s{cfg['target_p']}p"
+
+        # If S×P changed since last preview, the old root won't be cleaned
+        # by build_pack_groups (which only deletes its own name), so we do it.
+        if _last_root and _last_root[0] != new_root:
+            _delete_tree(doc, _last_root[0])
+        _last_root.clear()
+        _last_root.append(new_root)
+
+        groups = build_pack_groups(doc, new_root)
+
+        if cfg["draw_all_candidates"]:
+            try:
+                groups["root"].addObject(groups["all_candidates"])
+            except Exception:
+                pass
+            draw_candidate_cells(doc, sketch_obj, best["points"],
+                                 params.radius, rotation,
+                                 groups["all_candidates"], cfg)
+
+        if cfg["draw_alignment_arrow"]:
+            draw_alignment_arrow(doc, sketch_obj, best["angle"],
+                                 "PackDirection", groups["direction"],
+                                 cfg["alignment_arrow_length"])
+
+        series_groups = build_series_groups(
+            doc, new_root, cfg["target_s"], groups["selected"])
+
+        selected_by_series = build_selected_by_series(
+            best["selected"], snake=cfg["snake_series_order"])
+
+        terminal_lookup = draw_all_selected_cells(
+            doc, sketch_obj, selected_by_series,
+            params.radius, rotation, series_groups, cfg)
+
+        draw_polarity_markers(doc, terminal_lookup, groups["polarity"], cfg)
+
+        if cfg.get("draw_pack_terminal_labels", True):
+            draw_pack_terminals(doc, selected_by_series, terminal_lookup,
+                                groups["polarity"], cfg, sketch_normal)
+
+        if cfg["draw_parallel_busbars"]:
+            draw_parallel_busbars(doc, selected_by_series, terminal_lookup,
+                                  groups["busbars"], new_root, cfg, sketch_normal)
+
+        if cfg["draw_series_jumpers"]:
+            draw_series_jumpers(doc, selected_by_series, terminal_lookup,
+                                groups["busbars"], new_root, cfg, sketch_normal)
+
+        doc.recompute()
+        Gui.ActiveDocument.ActiveView.fitAll()
+
+    def _cleanup() -> None:
+        """Remove the last preview from the document (called on Cancel)."""
+        if _last_root:
+            _delete_tree(doc, _last_root[0])
+            doc.recompute()
+
+    cfg = get_user_settings(DEFAULTS, preview_fn=_draw, cleanup_fn=_cleanup)
     if cfg is None:
+        _cleanup()
         print("BatteryPackLayoutTool: cancelled.")
         return
 
-    sketch_obj, alignment_edge = get_selected_sketch_and_edge()
-    face  = get_local_face(sketch_obj)
-    bbox  = face.BoundBox
-    params = grid_params_from_config(cfg)
-
-    # Build angle list
-    if cfg["use_selected_edge_alignment"]:
-        base_angle = get_edge_angle_in_local_coords(
-            sketch_obj, alignment_edge,
-            fallback_angle_deg=cfg["fallback_angle_deg"],
-        )
-        angle_list = [
-            base_angle + d
-            for d in parse_float_list(cfg["edge_angle_offsets_deg"], [0.0])
-        ]
-        print(f"BatteryPackLayoutTool: edge base angle = {base_angle:.2f}°")
-    else:
-        angle_list = parse_float_list(cfg["angles_deg"], [0, 5, 10, 15, 20, 25, 30])
-
-    # Sweep angles → best result
-    best = sweep_angles(face, bbox, angle_list, params, cfg)
-
-    # ── Logging ─────────────────────────────────────────────────────────
-    print("─" * 50)
-    print(f"Mode             : {cfg['mode']}")
-    print(f"Best angle       : {best['angle']:.2f}°")
-    print(f"Candidate cells  : {len(best['points'])}")
-    print(f"Rows found       : {len(best['rows'])}")
-    print(f"Valid rows (≥{cfg['target_p']}p): {len(best['valid_rows'])}")
-    print(f"Selected         : {best['selected_count']} / "
-          f"{cfg['target_s'] * cfg['target_p']}")
-
-    if cfg["mode"] == "pack" and best["selected_count"] < cfg["target_s"] * cfg["target_p"]:
-        print(f"WARNING: cannot fit a full {cfg['target_s']}s{cfg['target_p']}p "
-              f"pack with current settings.")
-    print("─" * 50)
-
-    rotation     = sketch_obj.Placement.Rotation
-    sketch_normal = get_sketch_normal(sketch_obj)
-
-    # ── Fit mode: just draw candidates ──────────────────────────────────
-    if cfg["mode"] == "fit":
-        grp = make_or_get_group(doc, "BatteryFit_AllCandidates")
-        draw_candidate_cells(
-            doc, sketch_obj, best["points"],
-            params.radius, rotation, grp, cfg,
-        )
-        doc.recompute()
-        Gui.ActiveDocument.ActiveView.fitAll()
-        return
-
-    # ── Pack mode ────────────────────────────────────────────────────────
-    root_name = f"BatteryPack_{cfg['target_s']}s{cfg['target_p']}p"
-    groups    = build_pack_groups(doc, root_name)
-
-    # All-candidate overlay
-    if cfg["draw_all_candidates"]:
-        try:
-            groups["root"].addObject(groups["all_candidates"])
-        except Exception:
-            pass
-        draw_candidate_cells(
-            doc, sketch_obj, best["points"],
-            params.radius, rotation, groups["all_candidates"], cfg,
-        )
-
-    # Alignment arrow
-    if cfg["draw_alignment_arrow"]:
-        draw_alignment_arrow(
-            doc, sketch_obj, best["angle"],
-            "PackDirection", groups["direction"],
-            cfg["alignment_arrow_length"],
-        )
-
-    # Series sub-groups
-    series_groups = build_series_groups(
-        doc, root_name, cfg["target_s"], groups["selected"]
-    )
-
-    # Build ordered S×P mapping
-    selected_by_series = build_selected_by_series(
-        best["selected"], snake=cfg["snake_series_order"]
-    )
-
-    # Draw cells + collect terminal positions
-    terminal_lookup = draw_all_selected_cells(
-        doc, sketch_obj, selected_by_series,
-        params.radius, rotation, series_groups, cfg,
-    )
-
-    # Polarity markers
-    draw_polarity_markers(doc, terminal_lookup, groups["polarity"], cfg)
-
-    # Pack-level terminal labels
-    if cfg.get("draw_pack_terminal_labels", True):
-        draw_pack_terminals(
-            doc, selected_by_series, terminal_lookup,
-            groups["polarity"], cfg, sketch_normal,
-        )
-
-    # Busbars
-    if cfg["draw_parallel_busbars"]:
-        draw_parallel_busbars(
-            doc, selected_by_series, terminal_lookup,
-            groups["busbars"], root_name, cfg, sketch_normal,
-        )
-
-    if cfg["draw_series_jumpers"]:
-        draw_series_jumpers(
-            doc, selected_by_series, terminal_lookup,
-            groups["busbars"], root_name, cfg, sketch_normal,
-        )
-
-    doc.recompute()
-    Gui.ActiveDocument.ActiveView.fitAll()
+    _draw(cfg)
     print("BatteryPackLayoutTool: done.")
 
 

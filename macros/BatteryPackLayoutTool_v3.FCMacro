@@ -47,6 +47,7 @@ from cellpacker.drawing.cells import (
     build_series_groups,
     draw_candidate_cells,
     draw_all_selected_cells,
+    get_sketch_normal,
 )
 from cellpacker.drawing.annotations import draw_polarity_markers, draw_alignment_arrow
 from cellpacker.routing.busbars import draw_parallel_busbars, draw_series_jumpers
@@ -99,7 +100,8 @@ def run() -> None:
               f"pack with current settings.")
     print("─" * 50)
 
-    rotation = sketch_obj.Placement.Rotation
+    rotation     = sketch_obj.Placement.Rotation
+    sketch_normal = get_sketch_normal(sketch_obj)
 
     # ── Fit mode: just draw candidates ──────────────────────────────────
     if cfg["mode"] == "fit":
@@ -158,13 +160,13 @@ def run() -> None:
     if cfg["draw_parallel_busbars"]:
         draw_parallel_busbars(
             doc, selected_by_series, terminal_lookup,
-            groups["busbars"], root_name, cfg,
+            groups["busbars"], root_name, cfg, sketch_normal,
         )
 
     if cfg["draw_series_jumpers"]:
         draw_series_jumpers(
             doc, selected_by_series, terminal_lookup,
-            groups["busbars"], root_name, cfg,
+            groups["busbars"], root_name, cfg, sketch_normal,
         )
 
     doc.recompute()

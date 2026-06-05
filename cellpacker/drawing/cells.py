@@ -28,6 +28,19 @@ def _try_add(parent, child) -> None:
         pass
 
 
+def _delete_tree(doc, name: str) -> None:
+    """Recursively delete a named group and all its descendants."""
+    grp = doc.getObject(name)
+    if grp is None:
+        return
+    for child in list(getattr(grp, "Group", [])):
+        _delete_tree(doc, child.Name)
+    try:
+        doc.removeObject(name)
+    except Exception:
+        pass
+
+
 def get_sketch_normal(sketch_obj) -> App.Vector:
     """
     Return the world-space normal of the sketch plane.
@@ -41,6 +54,10 @@ def get_sketch_normal(sketch_obj) -> App.Vector:
 
 
 def build_pack_groups(doc, root_name: str) -> dict[str, object]:
+    # Wipe any objects from a previous run with the same name so they
+    # don't stack on top of the fresh result.
+    _delete_tree(doc, root_name)
+
     grp_root = make_or_get_group(doc, root_name)
     grp_all  = make_or_get_group(doc, root_name + "_AllCandidates")
     grp_pack = make_or_get_group(doc, root_name + "_Selected")

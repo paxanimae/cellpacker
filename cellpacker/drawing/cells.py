@@ -48,6 +48,13 @@ def build_pack_groups(doc, root_name: str) -> dict[str, object]:
     grp_pol  = make_or_get_group(doc, root_name + "_Polarity")
     grp_dir  = make_or_get_group(doc, root_name + "_Direction")
 
+    # Pre-create busbar sub-groups so they appear in the tree in a fixed order.
+    grp_bus_plus   = make_or_get_group(doc, root_name + "_Busbars_Plus")
+    grp_bus_minus  = make_or_get_group(doc, root_name + "_Busbars_Minus")
+    grp_bus_series = make_or_get_group(doc, root_name + "_Busbars_Series")
+    for sub in (grp_bus_plus, grp_bus_minus, grp_bus_series):
+        _try_add(grp_bus, sub)
+
     for grp in (grp_pack, grp_bus, grp_pol, grp_dir):
         _try_add(grp_root, grp)
 

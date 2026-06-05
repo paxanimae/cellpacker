@@ -5,17 +5,21 @@ Parallel busbar rails and series jumpers.
 
 Parallel busbars
     Within each series group, connect all + terminals together and all −
-    terminals together with a polyline or solid strip.
+    terminals together.  The two groups are kept separate and placed at
+    their respective terminal Z heights:
+
+      ``_Busbars_Plus``  – positive-terminal rails at ``plus_busbar_z``
+      ``_Busbars_Minus`` – negative-terminal rails at ``minus_busbar_z``
 
 Series jumpers
-    Connect the − rail of series group S to the + rail of group S+1
-    (or vice-versa, depending on polarity convention).  Three styles:
+    Connect the − rail of series group S to the + rail of group S+1.
+    Each jumper runs from ``plus_busbar_z`` (the + endpoint) down to
+    ``minus_busbar_z`` (the − endpoint), giving a physically correct
+    diagonal rather than a flat offset wire.  Three styles:
 
-    ``paired``  – connect each P-cell terminal to the matching P-cell in
-                  the next group (one jumper per P cell).
-    ``rail``    – one jumper between the nearest endpoints of the two rails.
-    ``single``  – one jumper from any terminal of group S to any terminal
-                  of group S+1 (legacy).
+    ``paired``  – one jumper per P-cell pair across the two groups.
+    ``rail``    – single jumper between nearest endpoints of the two rails.
+    ``single``  – one jumper from any terminal of group S to any of S+1.
 """
 
 from __future__ import annotations
@@ -36,7 +40,6 @@ def _busbar_path(
     cfg: dict,
     color: tuple,
 ) -> list:
-    """Draw either a solid strip sequence or a polyline, per *cfg*."""
     if len(points) < 2:
         return []
     created = []
@@ -54,8 +57,9 @@ def _busbar_path(
     return created
 
 
-def _with_z(pt: App.Vector, z_off: float) -> App.Vector:
-    return App.Vector(pt.x, pt.y, pt.z + z_off)
+def _at_z(pt: App.Vector, z: float) -> App.Vector:
+    """Return a copy of *pt* with Z replaced by *z* (not added — absolute)."""
+    return App.Vector(pt.x, pt.y, z)
 
 
 def _nearest_pair(
@@ -72,6 +76,13 @@ def _nearest_pair(
     return best_a, best_b
 
 
+def _try_add(parent, child) -> None:
+    try:
+        parent.addObject(child)
+    except Exception:
+        pass
+
+
 # ── Parallel busbars ──────────────────────────────────────────────────────
 
 def draw_parallel_busbars(
@@ -82,28 +93,42 @@ def draw_parallel_busbars(
     root_name: str,
     cfg: dict,
 ) -> None:
-    """Connect like-polarity terminals within every series group."""
-    grp = make_or_get_group(doc, root_name + "_Busbars_Parallel")
-    try:
-        parent_group.addObject(grp)
-    except Exception:
-        pass
+    """
+    Connect like-polarity terminals within every series group.
+
+    Creates two sub-groups under *parent_group*:
+      ``<root>_Busbars_Plus``  at ``plus_busbar_z``
+      ``<root>_Busbars_Minus`` at ``minus_busbar_z``
+    """
+    plus_z  = cfg.get("plus_busbar_z",  cfg.get("cell_height", 70.0))
+    minus_z = cfg.get("minus_busbar_z", 0.0)
+
+    plus_color  = cfg.get("plus_busbar_color",  (0.85, 0.10, 0.10))
+    minus_color = cfg.get("minus_busbar_color", (0.10, 0.10, 0.85))
+
+    grp_plus  = make_or_get_group(doc, root_name + "_Busbars_Plus")
+    grp_minus = make_or_get_group(doc, root_name + "_Busbars_Minus")
+    _try_add(parent_group, grp_plus)
+    _try_add(parent_group, grp_minus)
 
     total_s = max(selected_by_series.keys()) if selected_by_series else 1
 
     for s, row in selected_by_series.items():
         if len(row) < 2:
             continue
-        color = (
-            get_series_color(s, total_s)
-            if cfg["colorize_series"]
-            else (0.2, 0.2, 0.8)
-        )
-        plus_pts  = [terminal_lookup[(c["series"], c["parallel"])]["plus"]  for c in row]
-        minus_pts = [terminal_lookup[(c["series"], c["parallel"])]["minus"] for c in row]
+        if cfg["colorize_series"]:
+            series_color = get_series_color(s, total_s)
+        else:
+            series_color = None   # fall back to layer colour below
 
-        _busbar_path(doc, plus_pts,  f"BUS_PAR_PLUS_S{s:02d}",  grp, cfg, color)
-        _busbar_path(doc, minus_pts, f"BUS_PAR_MINUS_S{s:02d}", grp, cfg, color)
+        c_plus  = series_color if series_color else plus_color
+        c_minus = series_color if series_color else minus_color
+
+        plus_pts  = [_at_z(terminal_lookup[(c["series"], c["parallel"])]["plus"],  plus_z)  for c in row]
+        minus_pts = [_at_z(terminal_lookup[(c["series"], c["parallel"])]["minus"], minus_z) for c in row]
+
+        _busbar_path(doc, plus_pts,  f"BUS_PLUS_S{s:02d}",  grp_plus,  cfg, c_plus)
+        _busbar_path(doc, minus_pts, f"BUS_MINUS_S{s:02d}", grp_minus, cfg, c_minus)
 
 
 # ── Series jumpers ────────────────────────────────────────────────────────
@@ -116,19 +141,21 @@ def draw_series_jumpers(
     root_name: str,
     cfg: dict,
 ) -> None:
-    """Connect consecutive series groups with the configured jumper style."""
-    grp = make_or_get_group(doc, root_name + "_Busbars_Series")
-    try:
-        parent_group.addObject(grp)
-    except Exception:
-        pass
+    """
+    Connect consecutive series groups.
 
-    style = cfg.get("series_jumper_style", "paired")
-    alternate = cfg.get("alternate_series_jumper_layers", True)
-    top_z    = cfg.get("top_layer_z",    0.5)
-    bottom_z = cfg.get("bottom_layer_z", -0.5)
-    top_col  = cfg.get("top_layer_color",    (0.10, 0.10, 0.10))
-    bot_col  = cfg.get("bottom_layer_color", (0.45, 0.45, 0.45))
+    Each jumper runs from the + rail of group S (at ``plus_busbar_z``) to
+    the − rail of group S+1 (at ``minus_busbar_z``), matching the physical
+    path a busbar takes between the two terminal faces of the cells.
+    """
+    plus_z  = cfg.get("plus_busbar_z",  cfg.get("cell_height", 70.0))
+    minus_z = cfg.get("minus_busbar_z", 0.0)
+
+    grp = make_or_get_group(doc, root_name + "_Busbars_Series")
+    _try_add(parent_group, grp)
+
+    style   = cfg.get("series_jumper_style", "paired")
+    total_s = max(selected_by_series.keys()) if selected_by_series else 1
 
     sorted_series = sorted(selected_by_series.keys())
 
@@ -137,35 +164,25 @@ def draw_series_jumpers(
         row_a  = selected_by_series[s]
         row_b  = selected_by_series[s_next]
 
-        # + side of s connects to − side of s_next (series convention)
-        plus_pts_a  = [terminal_lookup[(c["series"], c["parallel"])]["plus"]  for c in row_a]
-        minus_pts_b = [terminal_lookup[(c["series"], c["parallel"])]["minus"] for c in row_b]
+        # + side of S (at plus_z) → − side of S+1 (at minus_z)
+        plus_pts_a  = [_at_z(terminal_lookup[(c["series"], c["parallel"])]["plus"],  plus_z)  for c in row_a]
+        minus_pts_b = [_at_z(terminal_lookup[(c["series"], c["parallel"])]["minus"], minus_z) for c in row_b]
 
-        z_off = top_z if (i % 2 == 0) else bottom_z
-        color = top_col if (i % 2 == 0) else bot_col
-        if not alternate:
-            z_off = top_z
-            color = top_col
-
+        color = get_series_color(s, total_s) if cfg["colorize_series"] else (0.20, 0.20, 0.20)
         label_base = f"BUS_SER_S{s:02d}_S{s_next:02d}"
 
         if style == "paired":
             n = min(len(plus_pts_a), len(minus_pts_b))
             for j in range(n):
-                a = _with_z(plus_pts_a[j],  z_off)
-                b = _with_z(minus_pts_b[j], z_off)
-                _busbar_path(doc, [a, b], f"{label_base}_P{j+1:02d}", grp, cfg, color)
+                _busbar_path(doc, [plus_pts_a[j], minus_pts_b[j]],
+                             f"{label_base}_P{j+1:02d}", grp, cfg, color)
 
         elif style == "rail":
-            a, b = _nearest_pair(
-                [_with_z(p, z_off) for p in plus_pts_a],
-                [_with_z(p, z_off) for p in minus_pts_b],
-            )
+            a, b = _nearest_pair(plus_pts_a, minus_pts_b)
             if a and b:
                 _busbar_path(doc, [a, b], label_base, grp, cfg, color)
 
         else:  # "single" / legacy
             if plus_pts_a and minus_pts_b:
-                a = _with_z(plus_pts_a[0],  z_off)
-                b = _with_z(minus_pts_b[-1], z_off)
-                _busbar_path(doc, [a, b], label_base, grp, cfg, color)
+                _busbar_path(doc, [plus_pts_a[0], minus_pts_b[-1]],
+                             label_base, grp, cfg, color)

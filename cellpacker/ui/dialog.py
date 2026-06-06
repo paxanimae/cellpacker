@@ -229,15 +229,27 @@ the dialog. Adjust and preview as many times as you like, then click
             # ── Render objects ────────────────────────────────────────────
             f.addRow(self._head("Render objects"))
 
-            self.make_2d = self._check(d["make_2d"])
-            self._row(f, "Draw 2D cell disks", self.make_2d,
-                "Draw a flat filled circle for each cell position on the sketch plane.\n"
+            render_w = Qt.QWidget()
+            render_lay = Qt.QHBoxLayout(render_w)
+            render_lay.setContentsMargins(0, 0, 0, 0)
+            self.make_2d = Qt.QRadioButton("2D cell disks")
+            self.make_3d = Qt.QRadioButton("3D cell cylinders")
+            self._render_grp = Qt.QButtonGroup(render_w)
+            self._render_grp.addButton(self.make_2d)
+            self._render_grp.addButton(self.make_3d)
+            (self.make_3d if d.get("make_3d") else self.make_2d).setChecked(True)
+            self.make_2d.setToolTip(
+                "Draw a flat filled circle for each cell on the sketch plane.\n"
                 "Good for layout planning, DXF export, and laser-cut templates.")
+            self.make_3d.setToolTip(
+                "Draw a solid 3D cylinder for each cell.\n"
+                "Use this when you need a 3D model for enclosure design.")
+            render_lay.addWidget(self.make_2d)
+            render_lay.addWidget(self.make_3d)
 
-            self.make_3d = self._check(d["make_3d"])
-            self._row(f, "Draw 3D cell cylinders", self.make_3d,
-                "Draw a 3D solid cylinder for each cell.\n"
-                "Use this when you need a 3D model for enclosure or housing design.")
+            lbl = Qt.QLabel("Render mode")
+            lbl.setToolTip("Cells are drawn as either flat 2D disks or 3D cylinders — not both.")
+            f.addRow(lbl, render_w)
 
             self.make_labels = self._check(d["make_labels"])
             self._row(f, "Draw S/P labels on cells", self.make_labels,

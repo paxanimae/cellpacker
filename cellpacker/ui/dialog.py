@@ -45,9 +45,11 @@ def get_user_settings(
             tabs.addTab(self._make_align_tab(),   "Alignment")
             tabs.addTab(self._make_score_tab(),   "Scoring")
 
-            # All tabs are built — wire up cross-tab mode cascade.
+            # All tabs are built — wire up cross-tab cascades.
             self.make_2d.toggled.connect(self._on_output_mode)
             self._on_output_mode()          # apply initial state
+            self.cell_diameter.valueChanged.connect(self._refresh_busbar_list)
+            self._refresh_busbar_list()     # initial catalog population
 
             btns = Qt.QDialogButtonBox(
                 Qt.QDialogButtonBox.Ok | Qt.QDialogButtonBox.Cancel
@@ -192,12 +194,6 @@ the dialog. Adjust and preview as many times as you like, then click
                 "Give each series group a unique colour so you can visually\n"
                 "trace series connections across the pack.")
 
-            self.snake = self._check(d["snake_series_order"])
-            self._row(f, "Snake series order", self.snake,
-                "Alternate the wiring direction of each series group:\n"
-                "group 1 goes left → right, group 2 right → left, and so on.\n"
-                "This minimises the length of the jumper wires between groups\n"
-                "because each group connects to the one directly next to it.")
 
             # ── Preset logic ──────────────────────────────────────────────
             def _apply_preset(_idx):
@@ -371,75 +367,385 @@ the dialog. Adjust and preview as many times as you like, then click
             self.cell_height.setEnabled(is_3d)
             # Auto-Z is a 2D-only concept
             self.auto_z_grp.setEnabled(not is_3d)
-            # Routing: solid strips and thickness only exist in 3D
-            self.busbar_solids.setEnabled(is_3d)
-            self.busbar_thickness.setEnabled(is_3d)
+            # Solid strips and thickness only exist in 3D
+            self.grp_solids.setEnabled(is_3d)
 
         # ── Tab: Routing ──────────────────────────────────────────────────
 
         def _make_routing_tab(self):
             d = self._defs
-            w = Qt.QWidget()
-            lay = Qt.QVBoxLayout(w)
+            try:
+                from cellpacker.busbar_catalog import load_catalog
+                self._catalog = load_catalog()
+            except Exception:
+                self._catalog = {"busbars": []}
 
-            # ── Parallel busbars ──────────────────────────────────────────
-            self.grp_par = Qt.QGroupBox("Parallel busbars")
-            self.grp_par.setCheckable(True)
-            self.grp_par.setChecked(d["draw_parallel_busbars"])
-            self.grp_par.setToolTip(
-                "Busbars that connect cells within the same series group in parallel.\n"
-                "There is one busbar on the positive-terminal face and one on\n"
-                "the negative-terminal face of each series group.\n"
-                "Uncheck this box to skip drawing parallel busbars entirely.")
-            fpar = Qt.QFormLayout(self.grp_par)
+            w   = Qt.QWidget()
+            outer = Qt.QVBoxLayout(w)
 
-            self.busbar_solids = self._check(d["draw_busbar_solids"])
-            self._row(fpar, "Draw as solid strips", self.busbar_solids,
-                "Create solid 3D rectangular strips for each busbar segment\n"
-                "instead of simple wire lines.\n"
-                "More physically accurate but slower to generate.\n"
-                "Solid strip dimensions are controlled by Width and Thickness below.")
+            self.grp_busbars = Qt.QGroupBox("Busbars")
+            self.grp_busbars.setCheckable(True)
+            self.grp_busbars.setChecked(d.get("draw_busbars", True))
+            self.grp_busbars.setToolTip(
+                "Draw all busbar connections for the pack.\n"
+                "Uncheck to skip busbar drawing entirely.")
+            grp_lay = Qt.QVBoxLayout(self.grp_busbars)
+
+            # ── Toolbar: add / remove + stock filter ─────────────────────
+            toolbar = Qt.QWidget()
+            tb_lay  = Qt.QHBoxLayout(toolbar)
+            tb_lay.setContentsMargins(0, 0, 0, 0)
+            tb_lay.setSpacing(4)
+
+            self._btn_add_busbar = Qt.QPushButton("+")
+            self._btn_add_busbar.setFixedWidth(28)
+            self._btn_add_busbar.setToolTip("Add a custom busbar entry")
+
+            self._btn_del_busbar = Qt.QPushButton("−")
+            self._btn_del_busbar.setFixedWidth(28)
+            self._btn_del_busbar.setEnabled(False)
+            self._btn_del_busbar.setToolTip(
+                "Delete selected busbar — only custom entries can be deleted")
+
+            self.busbar_stock_filter = Qt.QCheckBox("In-stock only")
+            self.busbar_stock_filter.setChecked(False)
+            self.busbar_stock_filter.setToolTip(
+                "Show only busbars marked in-stock.\n"
+                "Toggle the checkbox next to any entry to mark it in-stock.")
+
+            tb_lay.addWidget(self._btn_add_busbar)
+            tb_lay.addWidget(self._btn_del_busbar)
+            tb_lay.addStretch()
+            tb_lay.addWidget(self.busbar_stock_filter)
+            grp_lay.addWidget(toolbar)
+
+            # ── List  +  SVG preview / details  (side by side) ───────────
+            catalog_split = Qt.QSplitter(Qt.Qt.Horizontal)
+
+            self.busbar_list = Qt.QListWidget()
+            self.busbar_list.setMinimumHeight(110)
+            self.busbar_list.setMaximumHeight(170)
+            self.busbar_list.setToolTip(
+                "Busbars compatible with the current cell diameter.\n"
+                "  • Check the box to toggle in-stock status\n"
+                "  • Select an entry to auto-fill Width / Thickness below")
+            catalog_split.addWidget(self.busbar_list)
+
+            right     = Qt.QWidget()
+            right_lay = Qt.QVBoxLayout(right)
+            right_lay.setContentsMargins(6, 0, 0, 0)
+            right_lay.setSpacing(4)
+
+            # SVG preview widget
+            try:
+                from PySide2.QtSvg import QSvgWidget
+                self._busbar_svg = QSvgWidget()
+                self._busbar_svg.setFixedSize(220, 64)
+                self._busbar_svg.setToolTip("Top-down view of selected busbar")
+                self._has_svg = True
+            except ImportError:
+                self._busbar_svg = Qt.QLabel("(QtSvg unavailable)")
+                self._busbar_svg.setFixedSize(220, 64)
+                self._busbar_svg.setAlignment(Qt.Qt.AlignCenter)
+                self._has_svg = False
+
+            right_lay.addWidget(self._busbar_svg)
+
+            self.busbar_details = Qt.QLabel("")
+            self.busbar_details.setWordWrap(True)
+            self.busbar_details.setAlignment(
+                Qt.Qt.AlignTop | Qt.Qt.AlignLeft)
+            right_lay.addWidget(self.busbar_details)
+            right_lay.addStretch()
+            catalog_split.addWidget(right)
+            catalog_split.setSizes([240, 230])
+            grp_lay.addWidget(catalog_split)
+
+            # ── Separator ────────────────────────────────────────────────
+            sep = Qt.QFrame()
+            sep.setFrameShape(Qt.QFrame.HLine)
+            sep.setFrameShadow(Qt.QFrame.Sunken)
+            grp_lay.addWidget(sep)
+
+            # ── Strip settings ───────────────────────────────────────────
+            fset = Qt.QFormLayout()
+            fset.setContentsMargins(0, 4, 0, 0)
 
             self.busbar_width = self._dspin(d["busbar_width"], 0.1, 100.0)
-            self._row(fpar, "Width (mm)", self.busbar_width,
+            self._row(fset, "Width (mm)", self.busbar_width,
                 "Physical width of the busbar strip in mm.\n"
-                "For nickel strip this is typically 6–10 mm.\n"
-                "In wire mode this also scales the line thickness in the viewport.")
+                "Auto-filled when a catalog entry is selected.\n"
+                "In wire mode this scales the line thickness in the viewport.")
 
+            self.grp_solids = Qt.QGroupBox("Draw as solid strips")
+            self.grp_solids.setCheckable(True)
+            self.grp_solids.setChecked(d["draw_busbar_solids"])
+            self.grp_solids.setToolTip(
+                "Create solid 3D rectangular strips instead of wire lines.\n"
+                "3D mode only — grayed out in 2D mode.")
+            fsolid = Qt.QFormLayout(self.grp_solids)
             self.busbar_thickness = self._dspin(d["busbar_thickness"], 0.01, 20.0)
-            self._row(fpar, "Thickness (mm)", self.busbar_thickness,
+            self._row(fsolid, "Thickness (mm)", self.busbar_thickness,
                 "Thickness of the solid busbar strip in mm.\n"
-                "For pure nickel strip: 0.1–0.3 mm.  For copper strip: 0.1–0.5 mm.\n"
-                "Only used when 'Draw as solid strips' is enabled.")
-            lay.addWidget(self.grp_par)
+                "Auto-filled when a catalog entry is selected.\n"
+                "Nickel strip: 0.10–0.30 mm.  Copper strip: 0.10–0.50 mm.")
+            fset.addRow(self.grp_solids)
 
-            # ── Series jumpers ────────────────────────────────────────────
-            self.grp_ser = Qt.QGroupBox("Series jumpers")
-            self.grp_ser.setCheckable(True)
-            self.grp_ser.setChecked(d["draw_series_jumpers"])
-            self.grp_ser.setToolTip(
-                "Busbars that connect the positive rail of one series group to\n"
-                "the negative rail of the next group, forming the series chain.\n"
-                "These carry the full pack current and run between terminal faces.\n"
-                "Uncheck this box to skip drawing series jumpers entirely.")
-            fser = Qt.QFormLayout(self.grp_ser)
+            grp_lay.addLayout(fset)
+            outer.addWidget(self.grp_busbars)
+            outer.addStretch()
 
-            self.jumper_style = Qt.QComboBox()
-            self.jumper_style.addItems(["paired", "rail", "single"])
-            self.jumper_style.setCurrentText(str(d.get("series_jumper_style", "paired")))
-            self._row(fser, "Jumper style", self.jumper_style,
-                "How series jumpers are drawn between adjacent groups:\n\n"
-                "  paired  – One jumper per parallel cell. The leftmost cell of\n"
-                "            group S connects to the leftmost of group S+1, etc.\n"
-                "            Most realistic for nickel-strip packs.\n\n"
-                "  rail    – A single jumper between the nearest endpoints of\n"
-                "            the two parallel rails. Simplest representation.\n\n"
-                "  single  – One jumper from any terminal of group S to any\n"
-                "            terminal of group S+1 (legacy, least accurate).")
-            lay.addWidget(self.grp_ser)
+            # Signals
+            self.busbar_stock_filter.toggled.connect(self._refresh_busbar_list)
+            self.busbar_list.itemSelectionChanged.connect(self._on_busbar_selected)
+            self.busbar_list.itemChanged.connect(self._on_busbar_item_changed)
+            self._btn_add_busbar.clicked.connect(self._add_busbar)
+            self._btn_del_busbar.clicked.connect(self._remove_busbar)
 
-            lay.addStretch()
             return w
+
+        @staticmethod
+        def _make_busbar_svg(entry: dict) -> bytes:
+            """Return SVG bytes for a top-down view of *entry*."""
+            W, H  = 220, 60
+            p     = entry.get("p_rating", 1)
+            frm   = entry.get("form", "strip")
+            mat   = entry.get("material", "nickel")
+
+            pad   = 8
+            s_h   = H - 2 * pad
+            pitch = (W - 2 * pad) / max(p, 1)
+            s_w   = pitch * p
+            sx    = (W - s_w) / 2
+            sy    = float(pad)
+
+            r_c = min(s_h * 0.36, pitch * 0.36)
+
+            if mat == "copper":
+                fill, stroke = "#d08040", "#905018"
+            else:
+                fill, stroke = "#b8b8b8", "#686868"
+
+            svg = [
+                f'<svg xmlns="http://www.w3.org/2000/svg" '
+                f'width="{W}" height="{H}" '
+                f'style="background:#2a2a2a;border-radius:4px">',
+                f'<rect x="{sx:.1f}" y="{sy:.1f}" '
+                f'width="{s_w:.1f}" height="{s_h:.1f}" '
+                f'rx="2" fill="{fill}" stroke="{stroke}" stroke-width="1.5"/>',
+            ]
+
+            if frm == "perforated" and p > 1:
+                slot_w = pitch * 0.38
+                slot_h = s_h * 0.52
+                for i in range(p - 1):
+                    slot_x = sx + pitch * (i + 1) - slot_w / 2
+                    slot_y = sy + (s_h - slot_h) / 2
+                    svg.append(
+                        f'<rect x="{slot_x:.1f}" y="{slot_y:.1f}" '
+                        f'width="{slot_w:.1f}" height="{slot_h:.1f}" '
+                        f'rx="1" fill="#2a2a2a" stroke="{stroke}" stroke-width="1"/>'
+                    )
+
+            for i in range(p):
+                cx = sx + pitch * (i + 0.5)
+                cy = sy + s_h / 2
+                svg.append(
+                    f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="{r_c:.1f}" '
+                    f'fill="none" stroke="{stroke}" stroke-width="1.5" '
+                    f'stroke-dasharray="3,2"/>'
+                )
+
+            svg.append("</svg>")
+            return "\n".join(svg).encode("utf-8")
+
+        def _refresh_busbar_list(self):
+            """Repopulate the catalog list filtered by cell diameter and stock."""
+            try:
+                from cellpacker.busbar_catalog import compatible_busbars, in_stock_busbars
+            except Exception:
+                return
+
+            diameter = self.cell_diameter.value()
+            entries  = compatible_busbars(self._catalog, diameter)
+            if self.busbar_stock_filter.isChecked():
+                entries = in_stock_busbars(entries)
+
+            prev_id = None
+            sel = self.busbar_list.selectedItems()
+            if sel:
+                d = sel[0].data(Qt.Qt.UserRole)
+                if d:
+                    prev_id = d.get("id")
+
+            self.busbar_list.blockSignals(True)
+            self.busbar_list.clear()
+            restore_row = None
+            for i, entry in enumerate(entries):
+                cf   = entry.get("cell_format") or "Universal"
+                perf = " perf" if entry.get("form") == "perforated" else ""
+                text = (f"{entry['p_rating']}P{perf}  "
+                        f"{entry['width_mm']}×{entry['thickness_mm']} mm"
+                        f"  [{cf}]")
+                item = Qt.QListWidgetItem(text)
+                item.setData(Qt.Qt.UserRole, entry)
+                item.setFlags(item.flags() | Qt.Qt.ItemIsUserCheckable)
+                item.setCheckState(
+                    Qt.Qt.Checked
+                    if entry.get("in_stock", False)
+                    else Qt.Qt.Unchecked
+                )
+                self.busbar_list.addItem(item)
+                if entry.get("id") == prev_id:
+                    restore_row = i
+            self.busbar_list.blockSignals(False)
+
+            if restore_row is not None:
+                self.busbar_list.setCurrentRow(restore_row)
+            elif self.busbar_list.count() > 0:
+                self.busbar_list.setCurrentRow(0)
+
+        def _on_busbar_selected(self):
+            """Auto-fill width/thickness and refresh SVG preview + details pane."""
+            sel   = self.busbar_list.selectedItems()
+            entry = sel[0].data(Qt.Qt.UserRole) if sel else None
+
+            self._btn_del_busbar.setEnabled(
+                bool(entry) and entry.get("custom", False))
+
+            if not entry:
+                self.busbar_details.setText("")
+                if self._has_svg:
+                    _blank = b'<svg xmlns="http://www.w3.org/2000/svg" width="220" height="64"/>'
+                    self._busbar_svg.load(_blank)
+                return
+
+            self.busbar_width.setValue(entry["width_mm"])
+            if self.make_3d.isChecked():
+                self.busbar_thickness.setValue(entry["thickness_mm"])
+
+            if self._has_svg:
+                self._busbar_svg.load(self._make_busbar_svg(entry))
+
+            cf_str     = entry.get("cell_format") or "Universal"
+            lo, hi     = entry.get("compatible_diameter_range", [0, 999])
+            hi_str     = "∞" if hi >= 999 else f"{hi:.1f} mm"
+            stock_str  = "✓" if entry.get("in_stock") else "✗"
+            custom_str = "Yes" if entry.get("custom") else "No (factory)"
+            self.busbar_details.setText(
+                f"<small>"
+                f"<b>Material:</b> {entry.get('material','—').capitalize()}<br>"
+                f"<b>Form:</b> {entry.get('form','—')}<br>"
+                f"<b>Size:</b> {entry['width_mm']} × {entry['thickness_mm']} mm<br>"
+                f"<b>Cell format:</b> {cf_str}<br>"
+                f"<b>Compat.:</b> {lo:.1f} – {hi_str}<br>"
+                f"<b>In stock:</b> {stock_str}  "
+                f"<b>Custom:</b> {custom_str}"
+                f"</small>"
+            )
+
+        def _on_busbar_item_changed(self, item):
+            """Persist the in_stock checkbox state to busbars.json."""
+            entry = item.data(Qt.Qt.UserRole)
+            if entry is None:
+                return
+            in_stock = item.checkState() == Qt.Qt.Checked
+            for b in self._catalog.get("busbars", []):
+                if b.get("id") == entry.get("id"):
+                    b["in_stock"] = in_stock
+                    break
+            try:
+                from cellpacker.busbar_catalog import save_catalog
+                save_catalog(self._catalog)
+            except Exception as exc:
+                print(f"CellPacker: could not save busbar catalog — {exc}")
+
+        def _add_busbar(self):
+            """Open a dialog to create a new custom busbar entry."""
+            dlg = Qt.QDialog(self)
+            dlg.setWindowTitle("Add Custom Busbar")
+            f   = Qt.QFormLayout(dlg)
+            f.setFieldGrowthPolicy(Qt.QFormLayout.ExpandingFieldsGrow)
+
+            name_edit  = Qt.QLineEdit()
+            mat_combo  = Qt.QComboBox()
+            mat_combo.addItems(
+                ["nickel", "copper", "nickel-plated-copper", "aluminium"])
+            form_combo = Qt.QComboBox()
+            form_combo.addItems(["strip", "perforated", "solid-sheet"])
+            p_spin = Qt.QSpinBox()
+            p_spin.setRange(1, 20)
+            w_spin  = self._dspin(8.0,   0.1,  200.0)
+            t_spin  = self._dspin(0.15,  0.01,  20.0)
+            lo_spin = self._dspin(10.0,  0.0,  999.0)
+            hi_spin = self._dspin(999.0, 0.0, 9999.0)
+            off_chk = self._check(False)
+
+            f.addRow("Name", name_edit)
+            f.addRow("Material", mat_combo)
+            f.addRow("Form", form_combo)
+            f.addRow("P-rating", p_spin)
+            f.addRow("Width (mm)", w_spin)
+            f.addRow("Thickness (mm)", t_spin)
+            f.addRow("Min cell diameter (mm)", lo_spin)
+            f.addRow("Max cell diameter (mm)", hi_spin)
+            f.addRow("Offset capable", off_chk)
+
+            btns = Qt.QDialogButtonBox(
+                Qt.QDialogButtonBox.Ok | Qt.QDialogButtonBox.Cancel)
+            btns.accepted.connect(dlg.accept)
+            btns.rejected.connect(dlg.reject)
+            f.addRow(btns)
+
+            if dlg.exec_() != Qt.QDialog.Accepted:
+                return
+            name = name_edit.text().strip()
+            if not name:
+                return
+
+            import re as _re, time as _time
+            safe = _re.sub(r"[^a-z0-9]+", "_",
+                           name.lower()).strip("_") or "busbar"
+            uid  = f"custom_{safe}_{int(_time.time()) % 100000}"
+
+            entry = {
+                "id": uid, "name": name,
+                "cell_format": None,
+                "compatible_diameter_range": [lo_spin.value(), hi_spin.value()],
+                "material": mat_combo.currentText(),
+                "form": form_combo.currentText(),
+                "p_rating": p_spin.value(),
+                "width_mm": w_spin.value(),
+                "thickness_mm": t_spin.value(),
+                "offset": off_chk.isChecked(),
+                "in_stock": True,
+                "custom": True,
+                "preview": None,
+            }
+            self._catalog.setdefault("busbars", []).append(entry)
+            try:
+                from cellpacker.busbar_catalog import save_catalog
+                save_catalog(self._catalog)
+            except Exception as exc:
+                print(f"CellPacker: could not save busbar catalog — {exc}")
+            self._refresh_busbar_list()
+
+        def _remove_busbar(self):
+            """Remove the selected custom busbar entry from the catalog."""
+            sel   = self.busbar_list.selectedItems()
+            entry = sel[0].data(Qt.Qt.UserRole) if sel else None
+            if not entry or not entry.get("custom"):
+                return
+            self._catalog["busbars"] = [
+                b for b in self._catalog.get("busbars", [])
+                if b.get("id") != entry.get("id")
+            ]
+            try:
+                from cellpacker.busbar_catalog import save_catalog
+                save_catalog(self._catalog)
+            except Exception as exc:
+                print(f"CellPacker: could not save busbar catalog — {exc}")
+            self._refresh_busbar_list()
 
         # ── Tab: Alignment ────────────────────────────────────────────────
 
@@ -536,7 +842,6 @@ the dialog. Adjust and preview as many times as you like, then click
                 "target_s":                      self.target_s.value(),
                 "target_p":                      self.target_p.value(),
                 "colorize_series":               self.colorize_series.isChecked(),
-                "snake_series_order":            self.snake.isChecked(),
                 "make_2d":                       not is_3d,
                 "make_3d":                       is_3d,
                 "make_labels":                   self.make_labels.isChecked(),
@@ -553,12 +858,20 @@ the dialog. Adjust and preview as many times as you like, then click
                 "auto_z":        auto_z,
                 "auto_z_step":   self.auto_z_step.value(),
                 # Routing
-                "draw_parallel_busbars":         self.grp_par.isChecked(),
-                "draw_busbar_solids":            is_3d and self.busbar_solids.isChecked(),
-                "busbar_width":                  self.busbar_width.value(),
-                "busbar_thickness":              self.busbar_thickness.value() if is_3d else 0.0,
-                "draw_series_jumpers":           self.grp_ser.isChecked(),
-                "series_jumper_style":           self.jumper_style.currentText(),
+                "draw_busbars":          self.grp_busbars.isChecked(),
+                "draw_busbar_solids":    is_3d and self.grp_solids.isChecked(),
+                "busbar_width":          self.busbar_width.value(),
+                "busbar_thickness":      self.busbar_thickness.value() if is_3d else 0.0,
+                "busbar_catalog_id":     (
+                    self.busbar_list.selectedItems()[0].data(
+                        Qt.Qt.UserRole)["id"]
+                    if self.busbar_list.selectedItems() else None
+                ),
+                "busbar_p_rating":       (
+                    self.busbar_list.selectedItems()[0].data(
+                        Qt.Qt.UserRole).get("p_rating", 1)
+                    if self.busbar_list.selectedItems() else 1
+                ),
                 # Alignment
                 "use_selected_edge_alignment":   self.use_edge_align.isChecked(),
                 "fallback_angle_deg":            self.fallback_angle.value(),
@@ -572,8 +885,8 @@ the dialog. Adjust and preview as many times as you like, then click
                 "row_shift_weight":              self.w_rowshift.value(),
                 "boundary_margin_penalty_weight": self.w_boundary.value(),
                 # Passthrough
-                "plus_busbar_color":             d["plus_busbar_color"],
-                "minus_busbar_color":            d["minus_busbar_color"],
+                "busbar_color_top":              d["busbar_color_top"],
+                "busbar_color_bottom":           d["busbar_color_bottom"],
                 "cell_fill_transparency":        d["cell_fill_transparency"],
             }
 

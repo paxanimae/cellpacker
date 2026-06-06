@@ -137,6 +137,63 @@ def draw_circle_outline(
     return circ
 
 
+def draw_busbar_face(
+    doc,
+    p1: App.Vector,
+    p2: App.Vector,
+    width: float,
+    label: str,
+    group,
+    color: tuple | None = None,
+    normal: App.Vector | None = None,
+) -> object | None:
+    """Draw a busbar segment as a flat filled rectangle on the sketch plane.
+
+    The rectangle is centred on the p1→p2 axis with *width* extending
+    perpendicular to the axis within the plane defined by *normal*.
+    Used for 2D (wire) busbar rendering where physical width matters.
+    """
+    v = p2.sub(p1)
+    length = v.Length
+    if length < 0.001:
+        return None
+
+    n = normal if normal is not None else App.Vector(0, 0, 1)
+    ux = App.Vector(v.x / length, v.y / length, v.z / length)
+
+    # Width direction: normal × axis direction, then normalised.
+    side = n.cross(ux)
+    if side.Length < 0.001:
+        # Axis is parallel to normal; fall back to a world-plane perpendicular.
+        side = App.Vector(1, 0, 0) if abs(ux.y) > 0.9 else App.Vector(0, 1, 0)
+    side.normalize()
+
+    hw = width / 2.0
+    hw_v = App.Vector(side.x * hw, side.y * hw, side.z * hw)
+
+    a = p1.add(hw_v)
+    b = p1.sub(hw_v)
+    c = p2.sub(hw_v)
+    d = p2.add(hw_v)
+
+    try:
+        poly = Part.makePolygon([a, b, c, d, a])
+        face = Part.Face(poly)
+        obj = doc.addObject("Part::Feature", label)
+        obj.Shape = face
+        group.addObject(obj)
+        _apply_color(obj, color)
+        try:
+            obj.ViewObject.DisplayMode = "Flat Lines"
+        except Exception:
+            pass
+        return obj
+    except Exception:
+        # Degenerate geometry — fall back to a simple wire outline.
+        return draw_polyline(doc, [a, b, c, d, a], label, group,
+                             color=color, closed=True)
+
+
 def draw_busbar_strip(
     doc,
     p1: App.Vector,

@@ -71,11 +71,8 @@ def select_compact_sp(
 
 def build_selected_by_series(
     selected_cells: list[dict] | None,
-    snake: bool = False,
 ) -> dict[int, list[dict]]:
-    """
-    Group *selected_cells* by their ``series`` key and optionally apply
-    snake ordering (even-numbered series rows are reversed in X).
+    """Group *selected_cells* by their ``series`` key.
 
     Returns a dict mapping ``series_index -> [cell_dict, ...]``.
     """
@@ -85,8 +82,6 @@ def build_selected_by_series(
 
     for s, row in by_series.items():
         row.sort(key=lambda c: c["x"])
-        if snake and (s % 2 == 0):
-            row.reverse()
         for idx, cell in enumerate(row, start=1):
             cell["parallel"] = idx
 

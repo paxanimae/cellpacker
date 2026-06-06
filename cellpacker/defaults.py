@@ -61,12 +61,11 @@ DEFAULTS: dict = {
 
     # ── Series / parallel visualisation ───────────────────────────────────
     "colorize_series": True,
-    "snake_series_order": True,
 
     # ── Busbar / routing ──────────────────────────────────────────────────
-    "draw_parallel_busbars": True,
-    "draw_series_jumpers": True,
-    "series_jumper_style": "paired",
+    "draw_busbars": True,
+    "busbar_catalog_id": None,
+    "busbar_p_rating": 1,
     "draw_busbar_solids": False,    # 3D only
     "busbar_width": 8.0,
     "busbar_thickness": 0.2,        # 3D only
@@ -91,7 +90,7 @@ DEFAULTS: dict = {
     "boundary_margin_penalty_weight": 0.25,
 
     # ── Visual style ──────────────────────────────────────────────────────
-    "plus_busbar_color":  (0.85, 0.10, 0.10),
-    "minus_busbar_color": (0.10, 0.10, 0.85),
+    "busbar_color_top":    (0.90, 0.55, 0.10),  # warm orange — top-face strips
+    "busbar_color_bottom": (0.15, 0.45, 0.90),  # cool blue  — bottom-face strips
     "cell_fill_transparency": 0,
 }

@@ -56,12 +56,13 @@ from cellpacker.drawing.annotations import (
     draw_pack_terminals,
     draw_alignment_arrow,
 )
-from cellpacker.routing.busbars import draw_parallel_busbars, draw_series_jumpers
+from cellpacker.routing.busbars import draw_parallel_busbars, draw_series_busbars
 
 
 # ── Main ───────────────────────────────────────────────────────────────────
 
 def run() -> None:
+    print("BatteryPackLayoutTool v3 — cellpacker loaded from:", __import__("cellpacker").__file__)
     doc = ensure_active_doc()
 
     # ── Selection + geometry (done once, shared by preview and final draw) ──
@@ -141,8 +142,12 @@ def run() -> None:
         series_groups = build_series_groups(
             doc, new_root, cfg["target_s"], groups["selected"])
 
-        selected_by_series = build_selected_by_series(
-            best["selected"], snake=cfg["snake_series_order"])
+        selected_by_series = build_selected_by_series(best["selected"])
+
+        if not selected_by_series:
+            print("BatteryPackLayoutTool: no valid cell window found — "
+                  "pack does not fit the sketch at any tested angle.")
+            return
 
         terminal_lookup = draw_all_selected_cells(
             doc, sketch_obj, selected_by_series,
@@ -154,12 +159,10 @@ def run() -> None:
             draw_pack_terminals(doc, selected_by_series, terminal_lookup,
                                 groups["polarity"], cfg, sketch_normal)
 
-        if cfg["draw_parallel_busbars"]:
+        if cfg["draw_busbars"]:
             draw_parallel_busbars(doc, selected_by_series, terminal_lookup,
                                   groups["busbars"], new_root, cfg, sketch_normal)
-
-        if cfg["draw_series_jumpers"]:
-            draw_series_jumpers(doc, selected_by_series, terminal_lookup,
+            draw_series_busbars(doc, selected_by_series, terminal_lookup,
                                 groups["busbars"], new_root, cfg, sketch_normal)
 
         doc.recompute()
@@ -176,6 +179,40 @@ def run() -> None:
         _cleanup()
         print("BatteryPackLayoutTool: cancelled.")
         return
+
+    # ── Busbar catalog validation ────────────────────────────────────────
+    try:
+        from cellpacker.busbar_catalog import load_catalog, validate_fit
+        catalog = load_catalog()
+        fit = validate_fit(catalog, cfg["cell_diameter"])
+        if fit != "ok":
+            from PySide2 import QtWidgets
+            if fit == "no_catalog_match":
+                msg = (
+                    f"No busbars in the catalog are compatible with "
+                    f"{cfg['cell_diameter']:.1f} mm cells.\n\n"
+                    "You can still generate the pack without busbars, or add a "
+                    "compatible entry to cellpacker/busbars.json and re-run."
+                )
+                btns = QtWidgets.QMessageBox.Ok | QtWidgets.QMessageBox.Cancel
+            else:  # none_in_stock
+                msg = (
+                    f"The catalog has busbars for {cfg['cell_diameter']:.1f} mm cells "
+                    "but none are marked in_stock.\n\n"
+                    "Mark the strips you have available in cellpacker/busbars.json, "
+                    "or continue anyway to generate the pack without a busbar selection."
+                )
+                btns = QtWidgets.QMessageBox.Ok | QtWidgets.QMessageBox.Cancel
+
+            reply = QtWidgets.QMessageBox.warning(
+                None, "Busbar catalog", msg, btns,
+            )
+            if reply == QtWidgets.QMessageBox.Cancel:
+                _cleanup()
+                print("BatteryPackLayoutTool: cancelled (no matching busbar).")
+                return
+    except Exception as exc:
+        print(f"BatteryPackLayoutTool: busbar catalog check skipped — {exc}")
 
     _draw(cfg)
     print("BatteryPackLayoutTool: done.")

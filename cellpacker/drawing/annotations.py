@@ -81,6 +81,8 @@ def draw_pack_terminals(
     along the sketch normal to sit at the correct terminal face height.
     """
     sorted_s = sorted(selected_by_series.keys())
+    if not sorted_s:
+        return
     s_first  = sorted_s[0]
     s_last   = sorted_s[-1]
     top_z    = cfg.get("layer_z_top",    0.0)

@@ -98,7 +98,7 @@ def run() -> None:
         print(f"Candidate cells  : {len(best['points'])}")
         print(f"Selected         : {best['selected_count']} / "
               f"{cfg['target_s'] * cfg['target_p']}")
-        if cfg["mode"] == "pack" and best["selected_count"] < cfg["target_s"] * cfg["target_p"]:
+        if best["selected_count"] < cfg["target_s"] * cfg["target_p"]:
             print(f"WARNING: cannot fit a full "
                   f"{cfg['target_s']}s{cfg['target_p']}p pack.")
         print("─" * 50)

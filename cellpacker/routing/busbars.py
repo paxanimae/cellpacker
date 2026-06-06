@@ -25,7 +25,6 @@ Connection count is driven by the busbar p_rating from the catalog:
 """
 
 from __future__ import annotations
-import math
 import FreeCAD as App
 
 from cellpacker.drawing.cells import make_or_get_group
@@ -152,51 +151,40 @@ def _busbar_segment(
         )
 
 
-def _draw_bridges(
-    doc,
+def _inter_group_edges(
     pts_a: list[App.Vector],
     pts_b: list[App.Vector],
-    label: str,
-    group,
-    cfg: dict,
-    color: tuple,
-    sketch_normal: App.Vector,
-) -> None:
-    """Draw series bridge strips from each cell in group A to its partner in B.
+    pitch_x: float,
+) -> list[tuple[App.Vector, App.Vector]]:
+    """Return all hex-adjacent cross-group cell pairs between groups A and B.
 
-    Respects p_rating: with p_rating=N, N cell pairs share one strip
-    (the strip runs from the centroid of the N pts_a cells to the
-    centroid of the N pts_b cells).
+    Only pairs whose XY distance is ≤ pitch_x × 1.05 (one hex step) are
+    returned, so bridges are always a single cell-to-cell hop that cannot
+    pass through any other cell.
+
+    Fallback: if no adjacent pairs exist (gap / jump case), return the
+    single closest pair so at least one bridge is drawn.
     """
-    n = min(len(pts_a), len(pts_b))
-    if n == 0:
-        return
-    p = max(1, cfg.get("busbar_p_rating", 1))
-    chunks = math.ceil(n / p)
-    for chunk in range(chunks):
-        lo = chunk * p
-        hi = min(lo + p, n)
-        # Representative points: first and last in the chunk give the two
-        # endpoints of the bridge strip.  For p=1 this is just one-to-one.
-        a_start = pts_a[lo]
-        a_end   = pts_a[hi - 1]
-        b_start = pts_b[lo]
-        b_end   = pts_b[hi - 1]
-        # Midpoints of the A-cluster and B-cluster define the strip axis.
-        mid_a = App.Vector(
-            (a_start.x + a_end.x) / 2,
-            (a_start.y + a_end.y) / 2,
-            (a_start.z + a_end.z) / 2,
-        )
-        mid_b = App.Vector(
-            (b_start.x + b_end.x) / 2,
-            (b_start.y + b_end.y) / 2,
-            (b_start.z + b_end.z) / 2,
-        )
-        _busbar_segment(
-            doc, mid_a, mid_b,
-            f"{label}_{chunk + 1:02d}", group, cfg, color, sketch_normal,
-        )
+    threshold_sq = (pitch_x * 1.05) ** 2
+    adjacent: list[tuple[float, App.Vector, App.Vector]] = []
+
+    for pa in pts_a:
+        for pb in pts_b:
+            dx = pa.x - pb.x
+            dy = pa.y - pb.y
+            d_sq = dx * dx + dy * dy
+            if d_sq <= threshold_sq:
+                adjacent.append((d_sq, pa, pb))
+
+    if adjacent:
+        return [(pa, pb) for _, pa, pb in adjacent]
+
+    # No touching pairs — find the single nearest pair as fallback.
+    best = min(
+        ((pa, pb) for pa in pts_a for pb in pts_b),
+        key=lambda pair: (pair[0].x - pair[1].x) ** 2 + (pair[0].y - pair[1].y) ** 2,
+    )
+    return [best]
 
 
 # ── Public drawing functions ───────────────────────────────────────────────
@@ -294,19 +282,16 @@ def draw_series_busbars(
             color    = color_bottom
             pol_a, pol_b = "plus", "minus"   # S_even(+bot) → S_next(−bot)
 
-        pts_a = sorted(
-            [_cell_center(terminal_lookup, c["series"], c["parallel"],
-                          sketch_normal, bridge_z) for c in row_a],
-            key=lambda p: p.x,
-        )
-        pts_b = sorted(
-            [_cell_center(terminal_lookup, c["series"], c["parallel"],
-                          sketch_normal, bridge_z) for c in row_b],
-            key=lambda p: p.x,
-        )
+        pitch_x = cfg.get("cell_diameter", 18.4) + cfg.get("clearance", 0.8)
 
-        _draw_bridges(
-            doc, pts_a, pts_b,
-            f"BB_S{s:02d}_S{s_next:02d}",
-            grp, cfg, color, sketch_normal,
-        )
+        pts_a = [_cell_center(terminal_lookup, c["series"], c["parallel"],
+                              sketch_normal, bridge_z) for c in row_a]
+        pts_b = [_cell_center(terminal_lookup, c["series"], c["parallel"],
+                              sketch_normal, bridge_z) for c in row_b]
+
+        label = f"BB_S{s:02d}_S{s_next:02d}"
+        for idx, (pa, pb) in enumerate(
+            _inter_group_edges(pts_a, pts_b, pitch_x), start=1
+        ):
+            _busbar_segment(doc, pa, pb, f"{label}_{idx:02d}",
+                            grp, cfg, color, sketch_normal)

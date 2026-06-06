@@ -344,24 +344,19 @@ the dialog. Adjust and preview as many times as you like, then click
             az = Qt.QFormLayout(self.auto_z_grp)
 
             self.layer_z_minus = self._dspin(d.get("layer_z_minus", 0.0), -100.0, 100.0, 1)
-            self._row(az, "− busbar layer offset (mm)", self.layer_z_minus,
-                "Offset of the negative-terminal busbar layer along the sketch normal.\n"
+            self._row(az, "− layer offset (mm)", self.layer_z_minus,
+                "Offset for: minus busbar rail, (−) polarity markers, PACK− label.\n"
                 "Typically 0 — the bottom-most layer, sitting on the sketch plane.")
 
             self.layer_z_cells = self._dspin(d.get("layer_z_cells", 1.0), -100.0, 100.0, 1)
             self._row(az, "Cell layer offset (mm)", self.layer_z_cells,
-                "Offset of the cell circles layer along the sketch normal.\n"
-                "Should be between the minus and plus busbar layers.")
+                "Offset for: cell circles, candidate circles, S/P text labels.\n"
+                "Should sit between the minus and plus layers.")
 
             self.layer_z_plus = self._dspin(d.get("layer_z_plus", 2.0), -100.0, 100.0, 1)
-            self._row(az, "+ busbar layer offset (mm)", self.layer_z_plus,
-                "Offset of the positive-terminal busbar layer along the sketch normal.\n"
-                "Typically the highest layer.")
-
-            self.layer_z_labels = self._dspin(d.get("layer_z_labels", 3.0), -100.0, 100.0, 1)
-            self._row(az, "Labels layer offset (mm)", self.layer_z_labels,
-                "Offset of polarity markers, S/P labels, and PACK+/- annotations.\n"
-                "Typically the top-most layer so labels are always visible.")
+            self._row(az, "+ layer offset (mm)", self.layer_z_plus,
+                "Offset for: plus busbar rail, (+) polarity markers, PACK+ label.\n"
+                "Typically the top-most layer.")
 
             f.addRow(self.auto_z_grp)
 
@@ -557,11 +552,10 @@ the dialog. Adjust and preview as many times as you like, then click
                 "alignment_arrow_length":        self.arrow_length.value(),
                 # Z-layer offsets: small visual offsets in 2D, physical in 3D
                 "auto_z":        auto_z,
-                "layer_z_minus": self.layer_z_minus.value() if auto_z else (0.0 if not is_3d else 0.0),
+                "layer_z_minus": self.layer_z_minus.value() if auto_z else 0.0,
                 "layer_z_cells": self.layer_z_cells.value() if auto_z else 0.0,
                 "layer_z_plus":  (self.layer_z_plus.value() if auto_z
                                   else (self.cell_height.value() if is_3d else 0.0)),
-                "layer_z_labels": self.layer_z_labels.value() if auto_z else 0.0,
                 # Routing
                 "draw_parallel_busbars":         self.grp_par.isChecked(),
                 "draw_busbar_solids":            is_3d and self.busbar_solids.isChecked(),

@@ -42,10 +42,9 @@ DEFAULTS: dict = {
     # 2D + Auto-Z OFF: all zero — every object on the sketch plane.
     # 3D             : layer_z_plus = cell_height, rest = 0 (set by dialog).
     "auto_z": True,
-    "layer_z_minus":  0.0,     # minus busbar layer
-    "layer_z_cells":  1.0,     # cell disks / candidate circles
-    "layer_z_plus":   2.0,     # plus busbar layer
-    "layer_z_labels": 3.0,     # polarity markers, PACK+/- labels
+    "layer_z_minus": 0.0,   # − busbar rail, (−) markers, PACK− label
+    "layer_z_cells": 1.0,   # cell disks, candidate circles, S/P text
+    "layer_z_plus":  2.0,   # + busbar rail, (+) markers, PACK+ label
 
     # ── Grid alignment ────────────────────────────────────────────────────
     "use_selected_edge_alignment": True,

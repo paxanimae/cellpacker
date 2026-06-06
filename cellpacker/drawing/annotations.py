@@ -80,21 +80,30 @@ def draw_pack_terminals(
     Labels and circles are drawn at the centroid of each rail, offset
     along the sketch normal to sit at the correct terminal face height.
     """
-    sorted_s  = sorted(selected_by_series.keys())
-    s_first   = sorted_s[0]
-    s_last    = sorted_s[-1]
-    pack_z = cfg.get("layer_z_annotations", 0.0)
-    dot_r  = cfg.get("terminal_dot_radius", 1.5) * 3.0  # larger circle
+    sorted_s = sorted(selected_by_series.keys())
+    s_first  = sorted_s[0]
+    s_last   = sorted_s[-1]
+    top_z    = cfg.get("layer_z_top",    0.0)
+    bottom_z = cfg.get("layer_z_bottom", 0.0)
+    dot_r    = cfg.get("terminal_dot_radius", 1.5) * 3.0
 
-    def _rail_centroid(cells, polarity: str) -> App.Vector:
+    # PACK− = S_first's minus rail.
+    # Odd group → minus at bottom face.  Even group → minus at top face.
+    neg_z = bottom_z if (s_first % 2 == 1) else top_z
+
+    # PACK+ = S_last's plus rail.
+    # Odd group → plus at top face.  Even group → plus at bottom face.
+    pos_z = top_z if (s_last % 2 == 1) else bottom_z
+
+    def _rail_centroid(cells, polarity: str, z: float) -> App.Vector:
         pts = [terminal_lookup[(c["series"], c["parallel"])][polarity] for c in cells]
         cx = sum(p.x for p in pts) / len(pts)
         cy = sum(p.y for p in pts) / len(pts)
         cz = sum(p.z for p in pts) / len(pts)
-        return _offset(App.Vector(cx, cy, cz), sketch_normal, pack_z)
+        return _offset(App.Vector(cx, cy, cz), sketch_normal, z)
 
-    neg_pt = _rail_centroid(selected_by_series[s_first], "minus")
-    pos_pt = _rail_centroid(selected_by_series[s_last],  "plus")
+    neg_pt = _rail_centroid(selected_by_series[s_first], "minus", neg_z)
+    pos_pt = _rail_centroid(selected_by_series[s_last],  "plus",  pos_z)
 
     srot = _sketch_rot(sketch_normal)
     draw_text(doc, neg_pt, "PACK-", "PackTerminal_NEG", group, color=(0.0, 0.0, 1.0), sketch_rotation=srot)

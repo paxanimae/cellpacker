@@ -19,9 +19,8 @@ def get_user_settings(
     Show the settings dialog and return the chosen configuration dict,
     or ``None`` if the user cancelled.
 
-    *preview_fn(cfg)*  – called when the user clicks Preview; draws the
-                         current layout into the FreeCAD document.
-    *cleanup_fn()*     – called when the user cancels; removes the preview.
+    *preview_fn(cfg)*  – called when the user clicks Preview.
+    *cleanup_fn()*     – called when the user cancels.
     """
     try:
         from PySide2 import QtWidgets as Qt, QtCore  # noqa: F401
@@ -32,21 +31,22 @@ def get_user_settings(
         def __init__(self, defs: dict) -> None:
             super().__init__()
             self.setWindowTitle("Battery Pack Layout Tool")
-            self.resize(780, 720)
+            self.resize(800, 680)
             self._defs = defs
 
             root = Qt.QVBoxLayout(self)
             tabs = Qt.QTabWidget()
             root.addWidget(tabs)
 
-            tabs.addTab(self._make_help_tab(),    "Help")
-            tabs.addTab(self._make_general_tab(), "General")
-            tabs.addTab(self._make_align_tab(),   "Alignment")
-            tabs.addTab(self._make_route_tab(),   "Routing")
-            tabs.addTab(self._make_score_tab(),   "Scoring")
+            tabs.addTab(self._make_help_tab(),      "Help")
+            tabs.addTab(self._make_pack_tab(),      "Pack")
+            tabs.addTab(self._make_display_tab(),   "Display")
+            tabs.addTab(self._make_routing_tab(),   "Routing")
+            tabs.addTab(self._make_align_tab(),     "Alignment")
+            tabs.addTab(self._make_score_tab(),     "Scoring")
 
-            # Keep plus_busbar_z in sync with cell_height as user types.
-            self.cell_height.valueChanged.connect(self.plus_busbar_z.setValue)
+            # Apply initial Auto-Z state (connects/disconnects cell_height signal).
+            self._on_auto_z(self.auto_z.isChecked())
 
             btns = Qt.QDialogButtonBox(
                 Qt.QDialogButtonBox.Ok | Qt.QDialogButtonBox.Cancel
@@ -55,71 +55,87 @@ def get_user_settings(
             btns.rejected.connect(self.reject)
 
             if preview_fn is not None:
-                self._preview_btn = btns.addButton(
-                    "Preview", Qt.QDialogButtonBox.ActionRole
+                prev = btns.addButton("Preview", Qt.QDialogButtonBox.ActionRole)
+                prev.setToolTip(
+                    "Run the layout with current settings and draw into the viewport.\n"
+                    "Adjust settings and click again to update."
                 )
-                self._preview_btn.setToolTip(
-                    "Run layout with current settings and draw into the viewport.\n"
-                    "Click again after changing settings to update."
-                )
-                self._preview_btn.clicked.connect(self._on_preview)
+                prev.clicked.connect(lambda: preview_fn(self.values()))
 
             root.addWidget(btns)
 
-        def _on_preview(self):
-            if preview_fn is not None:
-                preview_fn(self.values())
+        # ── Helpers ───────────────────────────────────────────────────────
 
-        def reject(self):
-            if cleanup_fn is not None:
-                cleanup_fn()
-            super().reject()
+        @staticmethod
+        def _dspin(val, lo, hi, decimals=3):
+            sb = Qt.QDoubleSpinBox()
+            sb.setRange(lo, hi)
+            sb.setDecimals(decimals)
+            sb.setValue(float(val))
+            return sb
 
-        # ── Tab builders ──────────────────────────────────────────────────
+        @staticmethod
+        def _spin(val, lo, hi):
+            sb = Qt.QSpinBox()
+            sb.setRange(lo, hi)
+            sb.setValue(int(val))
+            return sb
 
-        def _make_help_tab(self) -> Qt.QWidget:
+        @staticmethod
+        def _check(val):
+            cb = Qt.QCheckBox()
+            cb.setChecked(bool(val))
+            return cb
+
+        @staticmethod
+        def _sep(text=""):
+            lbl = Qt.QLabel(f"<b>{text}</b>" if text else "")
+            return lbl
+
+        # ── Tab: Help ─────────────────────────────────────────────────────
+
+        def _make_help_tab(self):
             w = Qt.QWidget()
             lay = Qt.QVBoxLayout(w)
             te = Qt.QTextEdit()
             te.setReadOnly(True)
             te.setHtml("""
 <h2>Battery Pack Layout Tool</h2>
-<p><b>1.</b> Draw or import a closed sketch representing the usable pack
-outline.</p>
-<p><b>2.</b> Select the closed sketch. To align rows to a frame tube or
-edge, also Ctrl-select one straight edge before running the macro.</p>
-<p><b>3.</b> Choose <b>Mode = pack</b> for a full S/P layout with labels,
-polarity and busbars. Choose <b>Mode = fit</b> to preview the maximum
-number of cells that can fit.</p>
-<p><b>4.</b> Pitch = diameter + clearance. For 21700 cells, 21.0–21.5 mm
-diameter and 0.5–1.0 mm clearance is typical.</p>
-<p><b>5.</b> Set <b>Series groups (S)</b> and <b>Parallel cells (P)</b>.
-Example: 20s4p = 20 groups × 4 cells = 80 cells total.</p>
+<p><b>1.</b> Draw a closed sketch for the pack outline. Select it (Ctrl-select
+a straight edge to align the grid to it), then run this macro.</p>
+<p><b>2.</b> Set cell type, series groups (S) and parallel cells (P)
+in the <b>Pack</b> tab.</p>
+<p><b>3.</b> Choose what to render in the <b>Display</b> tab.
+Enable <i>Auto-Z</i> to separate layers by their physical height —
+minus terminal at the base, cells in the middle, plus terminal at the top.</p>
+<p><b>4.</b> Configure busbars in the <b>Routing</b> tab.
+Uncheck the group header to disable that busbar type entirely.</p>
+<p><b>5.</b> Click <b>Preview</b> to draw into the viewport without closing
+the dialog. Adjust and preview as many times as you like, then click
+<b>OK</b> to finalise.</p>
 <pre>
-Candidate cells:      Selected 20s4p:       Busbars:
- o o o o o            S01: + + + +          — parallel rails within group
-  o o o o              S02: - - - -          | series jumpers between groups
- o o o o o            S03: + + + +
+  Candidates:          Selected 5s5p:       Busbars:
+   o o o o o           S01: + + + + +       ─── parallel rail (+ terminal face)
+    o o o o             S02: - - - - -       ─── parallel rail (− terminal face)
+   o o o o o           S03: + + + + +       ╱   series jumpers (between groups)
 </pre>
 """)
             lay.addWidget(te)
             return w
 
-        def _make_general_tab(self) -> Qt.QWidget:
+        # ── Tab: Pack ─────────────────────────────────────────────────────
+
+        def _make_pack_tab(self):
             w = Qt.QWidget()
             f = Qt.QFormLayout(w)
             d = self._defs
 
-            self.mode = Qt.QComboBox()
-            self.mode.addItems(["fit", "pack"])
-            self.mode.setCurrentText(str(d["mode"]))
-            f.addRow("Mode", self.mode)
-
-            # ── Cell type preset dropdown ──────────────────────────────────
+            # Cell type preset
             self.cell_type = Qt.QComboBox()
             self.cell_type.addItem("Custom")
             for name in CELL_PRESETS:
                 self.cell_type.addItem(name)
+            f.addRow("Cell type", self.cell_type)
 
             self.cell_diameter = self._dspin(d["cell_diameter"], 1.0, 100.0)
             f.addRow("Cell diameter (mm)", self.cell_diameter)
@@ -130,9 +146,26 @@ Candidate cells:      Selected 20s4p:       Busbars:
             self.cell_height = self._dspin(d["cell_height"], 1.0, 200.0)
             f.addRow("Cell height (mm)", self.cell_height)
 
-            # Selecting a preset fills diameter and height (height signal then
-            # cascades to plus_busbar_z via the connection in __init__).
-            def _apply_preset(idx):
+            f.addRow(self._sep())
+            f.addRow(self._sep("Pack topology"))
+
+            self.target_s = self._spin(d["target_s"], 1, 200)
+            f.addRow("Series groups (S)", self.target_s)
+
+            self.target_p = self._spin(d["target_p"], 1, 100)
+            f.addRow("Parallel cells (P)", self.target_p)
+
+            f.addRow(self._sep())
+            f.addRow(self._sep("Series layout"))
+
+            self.colorize_series = self._check(d["colorize_series"])
+            f.addRow("Colorize by series group", self.colorize_series)
+
+            self.snake = self._check(d["snake_series_order"])
+            f.addRow("Snake series order", self.snake)
+
+            # ── Preset logic ──────────────────────────────────────────────
+            def _apply_preset(_idx):
                 name = self.cell_type.currentText()
                 if name in CELL_PRESETS:
                     diam, ht = CELL_PRESETS[name]
@@ -141,42 +174,147 @@ Candidate cells:      Selected 20s4p:       Busbars:
 
             self.cell_type.currentIndexChanged.connect(_apply_preset)
 
-            # Pre-select the matching preset if the current defaults match one.
             for name, (diam, ht) in CELL_PRESETS.items():
                 if (abs(d["cell_diameter"] - diam) < 0.05
                         and abs(d["cell_height"] - ht) < 0.05):
                     self.cell_type.setCurrentText(name)
                     break
 
-            f.insertRow(1, "Cell type", self.cell_type)
-
-            self.target_s = self._spin(d["target_s"], 1, 200)
-            f.addRow("Series groups (S)", self.target_s)
-
-            self.target_p = self._spin(d["target_p"], 1, 100)
-            f.addRow("Parallel cells (P)", self.target_p)
-
-            self.make_2d = self._check(d["make_2d"])
-            f.addRow("Draw 2D cells", self.make_2d)
-
-            self.make_3d = self._check(d["make_3d"])
-            f.addRow("Draw 3D cells", self.make_3d)
-
-            self.make_labels = self._check(d["make_labels"])
-            f.addRow("Draw S/P labels", self.make_labels)
-
-            self.draw_all_candidates = self._check(d["draw_all_candidates"])
-            f.addRow("Draw all candidate cells", self.draw_all_candidates)
-
             return w
 
-        def _make_align_tab(self) -> Qt.QWidget:
+        # ── Tab: Display ──────────────────────────────────────────────────
+
+        def _make_display_tab(self):
+            d = self._defs
+            w = Qt.QWidget()
+            scroll = Qt.QScrollArea()
+            scroll.setWidgetResizable(True)
+            inner = Qt.QWidget()
+            f = Qt.QFormLayout(inner)
+
+            # ── Render objects ────────────────────────────────────────────
+            f.addRow(self._sep("Render objects"))
+            self.make_2d = self._check(d["make_2d"])
+            f.addRow("Draw 2D cell disks", self.make_2d)
+            self.make_3d = self._check(d["make_3d"])
+            f.addRow("Draw 3D cell cylinders", self.make_3d)
+            self.make_labels = self._check(d["make_labels"])
+            f.addRow("Draw S/P labels on cells", self.make_labels)
+
+            # ── Candidate overlay ─────────────────────────────────────────
+            f.addRow(self._sep())
+            f.addRow(self._sep("Candidate cell overlay"))
+            self.show_candidates = self._check(d.get("show_candidates", True))
+            f.addRow("Show all candidate positions", self.show_candidates)
+            self.candidates_visible = self._check(d.get("candidates_visible", True))
+            f.addRow("  Visible in viewport", self.candidates_visible)
+            self.show_candidates.stateChanged.connect(
+                lambda s: self.candidates_visible.setEnabled(bool(s))
+            )
+            self.candidates_visible.setEnabled(self.show_candidates.isChecked())
+
+            # ── Annotations ───────────────────────────────────────────────
+            f.addRow(self._sep())
+            f.addRow(self._sep("Annotations"))
+            self.draw_pol = self._check(d["draw_polarity_markers"])
+            f.addRow("Draw (+) / (-) markers per cell", self.draw_pol)
+            self.draw_dots = self._check(d["draw_terminal_dots"])
+            f.addRow("Draw terminal dots", self.draw_dots)
+            self.dot_radius = self._dspin(d["terminal_dot_radius"], 0.1, 20.0)
+            f.addRow("  Dot radius (mm)", self.dot_radius)
+            self.pol_offset = self._dspin(d["polarity_offset"], 0.1, 50.0)
+            f.addRow("  Polarity offset from centre (mm)", self.pol_offset)
+            self.draw_pack_labels = self._check(d.get("draw_pack_terminal_labels", True))
+            f.addRow("Draw PACK+ / PACK- output labels", self.draw_pack_labels)
+            self.draw_arrow = self._check(d["draw_alignment_arrow"])
+            f.addRow("Draw grid alignment arrow", self.draw_arrow)
+            self.arrow_length = self._dspin(d["alignment_arrow_length"], 1.0, 1000.0)
+            f.addRow("  Arrow length (mm)", self.arrow_length)
+
+            # ── Z-layering ────────────────────────────────────────────────
+            f.addRow(self._sep())
+            f.addRow(self._sep("Z-layering"))
+            self.auto_z = self._check(d.get("auto_z", True))
+            f.addRow("Auto-Z (physical layer heights)", self.auto_z)
+            note = Qt.QLabel(
+                "  Auto-Z ON: layers follow physical cell height.\n"
+                "  Auto-Z OFF: everything drawn flat on the sketch plane (Z = 0)."
+            )
+            note.setWordWrap(True)
+            f.addRow(note)
+            self.minus_busbar_z = self._dspin(d["minus_busbar_z"], -500.0, 500.0)
+            f.addRow("  − terminal layer Z (mm)", self.minus_busbar_z)
+            self.plus_busbar_z = self._dspin(d["plus_busbar_z"], -500.0, 500.0)
+            f.addRow("  + terminal layer Z (mm)", self.plus_busbar_z)
+
+            self.auto_z.stateChanged.connect(self._on_auto_z)
+
+            scroll.setWidget(inner)
+            outer = Qt.QVBoxLayout(w)
+            outer.addWidget(scroll)
+            return w
+
+        def _on_auto_z(self, state):
+            on = bool(state)
+            self.plus_busbar_z.setEnabled(not on)
+            self.minus_busbar_z.setEnabled(not on)
+            try:
+                self.cell_height.valueChanged.disconnect(self.plus_busbar_z.setValue)
+            except Exception:
+                pass
+            if on:
+                self.cell_height.valueChanged.connect(self.plus_busbar_z.setValue)
+                self.plus_busbar_z.setValue(self.cell_height.value())
+                self.minus_busbar_z.setValue(0.0)
+            else:
+                self.plus_busbar_z.setValue(0.0)
+                self.minus_busbar_z.setValue(0.0)
+
+        # ── Tab: Routing ──────────────────────────────────────────────────
+
+        def _make_routing_tab(self):
+            d = self._defs
+            w = Qt.QWidget()
+            lay = Qt.QVBoxLayout(w)
+
+            # ── Parallel busbars ──────────────────────────────────────────
+            self.grp_par = Qt.QGroupBox("Parallel busbars")
+            self.grp_par.setCheckable(True)
+            self.grp_par.setChecked(d["draw_parallel_busbars"])
+            fpar = Qt.QFormLayout(self.grp_par)
+
+            self.busbar_solids = self._check(d["draw_busbar_solids"])
+            fpar.addRow("Draw as solid strips", self.busbar_solids)
+            self.busbar_width = self._dspin(d["busbar_width"], 0.1, 100.0)
+            fpar.addRow("Width (mm)", self.busbar_width)
+            self.busbar_thickness = self._dspin(d["busbar_thickness"], 0.01, 20.0)
+            fpar.addRow("Thickness (mm)", self.busbar_thickness)
+            lay.addWidget(self.grp_par)
+
+            # ── Series jumpers ────────────────────────────────────────────
+            self.grp_ser = Qt.QGroupBox("Series jumpers")
+            self.grp_ser.setCheckable(True)
+            self.grp_ser.setChecked(d["draw_series_jumpers"])
+            fser = Qt.QFormLayout(self.grp_ser)
+
+            self.jumper_style = Qt.QComboBox()
+            self.jumper_style.addItems(["paired", "rail", "single"])
+            self.jumper_style.setCurrentText(str(d.get("series_jumper_style", "paired")))
+            fser.addRow("Jumper style", self.jumper_style)
+            lay.addWidget(self.grp_ser)
+
+            lay.addStretch()
+            return w
+
+        # ── Tab: Alignment ────────────────────────────────────────────────
+
+        def _make_align_tab(self):
             w = Qt.QWidget()
             f = Qt.QFormLayout(w)
             d = self._defs
 
             self.use_edge_align = self._check(d["use_selected_edge_alignment"])
-            f.addRow("Use selected edge alignment", self.use_edge_align)
+            f.addRow("Align grid to selected edge", self.use_edge_align)
 
             self.fallback_angle = self._dspin(d["fallback_angle_deg"], -360.0, 360.0)
             f.addRow("Fallback angle (deg)", self.fallback_angle)
@@ -187,66 +325,11 @@ Candidate cells:      Selected 20s4p:       Busbars:
             self.angles = Qt.QLineEdit(str(d["angles_deg"]))
             f.addRow("Angle sweep (deg, CSV)", self.angles)
 
-            self.draw_arrow = self._check(d["draw_alignment_arrow"])
-            f.addRow("Draw alignment arrow", self.draw_arrow)
-
-            self.arrow_length = self._dspin(d["alignment_arrow_length"], 1.0, 1000.0)
-            f.addRow("Alignment arrow length", self.arrow_length)
-
             return w
 
-        def _make_route_tab(self) -> Qt.QWidget:
-            w = Qt.QWidget()
-            f = Qt.QFormLayout(w)
-            d = self._defs
+        # ── Tab: Scoring ──────────────────────────────────────────────────
 
-            self.colorize_series = self._check(d["colorize_series"])
-            f.addRow("Colorize series", self.colorize_series)
-
-            self.snake = self._check(d["snake_series_order"])
-            f.addRow("Snake series order", self.snake)
-
-            self.draw_par = self._check(d["draw_parallel_busbars"])
-            f.addRow("Draw parallel busbars", self.draw_par)
-
-            self.draw_ser = self._check(d["draw_series_jumpers"])
-            f.addRow("Draw series jumpers", self.draw_ser)
-
-            self.jumper_style = Qt.QComboBox()
-            self.jumper_style.addItems(["paired", "rail", "single"])
-            self.jumper_style.setCurrentText(str(d.get("series_jumper_style", "paired")))
-            f.addRow("Series jumper style", self.jumper_style)
-
-            self.busbar_solids = self._check(d["draw_busbar_solids"])
-            f.addRow("Draw busbar solids", self.busbar_solids)
-
-            self.busbar_width = self._dspin(d["busbar_width"], 0.1, 100.0)
-            f.addRow("Busbar width (mm)", self.busbar_width)
-
-            self.busbar_thickness = self._dspin(d["busbar_thickness"], 0.01, 20.0)
-            f.addRow("Busbar thickness (mm)", self.busbar_thickness)
-
-            self.draw_pol = self._check(d["draw_polarity_markers"])
-            f.addRow("Draw polarity markers", self.draw_pol)
-
-            self.draw_dots = self._check(d["draw_terminal_dots"])
-            f.addRow("Draw terminal dots", self.draw_dots)
-
-            self.dot_radius = self._dspin(d["terminal_dot_radius"], 0.1, 20.0)
-            f.addRow("Terminal dot radius (mm)", self.dot_radius)
-
-            self.pol_offset = self._dspin(d["polarity_offset"], 0.1, 50.0)
-            f.addRow("Polarity offset (mm)", self.pol_offset)
-
-            self.plus_busbar_z = self._dspin(d["plus_busbar_z"], -500.0, 500.0)
-            f.addRow("+ busbar Z (mm, = cell height)", self.plus_busbar_z)
-
-            self.minus_busbar_z = self._dspin(d["minus_busbar_z"], -500.0, 500.0)
-            f.addRow("− busbar Z (mm)", self.minus_busbar_z)
-
-            return w
-
-        def _make_score_tab(self) -> Qt.QWidget:
+        def _make_score_tab(self):
             w = Qt.QWidget()
             f = Qt.QFormLayout(w)
             d = self._defs
@@ -271,75 +354,67 @@ Candidate cells:      Selected 20s4p:       Busbars:
 
             return w
 
-        # ── Widget factories ──────────────────────────────────────────────
-
-        @staticmethod
-        def _dspin(val: float, lo: float, hi: float) -> Qt.QDoubleSpinBox:
-            sb = Qt.QDoubleSpinBox()
-            sb.setRange(lo, hi)
-            sb.setDecimals(3)
-            sb.setValue(float(val))
-            return sb
-
-        @staticmethod
-        def _spin(val: int, lo: int, hi: int) -> Qt.QSpinBox:
-            sb = Qt.QSpinBox()
-            sb.setRange(lo, hi)
-            sb.setValue(int(val))
-            return sb
-
-        @staticmethod
-        def _check(val: bool) -> Qt.QCheckBox:
-            cb = Qt.QCheckBox()
-            cb.setChecked(bool(val))
-            return cb
-
         # ── Result extraction ─────────────────────────────────────────────
 
         def values(self) -> dict:
             d = self._defs
             return {
-                "mode":                          self.mode.currentText(),
+                # Cell geometry
                 "cell_diameter":                 self.cell_diameter.value(),
                 "clearance":                     self.clearance.value(),
                 "cell_height":                   self.cell_height.value(),
+                # Pack topology
                 "target_s":                      self.target_s.value(),
                 "target_p":                      self.target_p.value(),
+                "colorize_series":               self.colorize_series.isChecked(),
+                "snake_series_order":            self.snake.isChecked(),
+                # Output flags
                 "make_2d":                       self.make_2d.isChecked(),
                 "make_3d":                       self.make_3d.isChecked(),
                 "make_labels":                   self.make_labels.isChecked(),
-                "draw_all_candidates":           self.draw_all_candidates.isChecked(),
-                "use_selected_edge_alignment":   self.use_edge_align.isChecked(),
-                "fallback_angle_deg":            self.fallback_angle.value(),
-                "edge_angle_offsets_deg":        self.edge_offsets.text(),
-                "angles_deg":                    self.angles.text(),
-                "colorize_series":               self.colorize_series.isChecked(),
-                "snake_series_order":            self.snake.isChecked(),
-                "draw_parallel_busbars":         self.draw_par.isChecked(),
-                "draw_series_jumpers":           self.draw_ser.isChecked(),
-                "series_jumper_style":           self.jumper_style.currentText(),
-                "draw_busbar_solids":            self.busbar_solids.isChecked(),
-                "busbar_width":                  self.busbar_width.value(),
-                "busbar_thickness":              self.busbar_thickness.value(),
-                "draw_alignment_arrow":          self.draw_arrow.isChecked(),
-                "alignment_arrow_length":        self.arrow_length.value(),
+                "show_candidates":               self.show_candidates.isChecked(),
+                "candidates_visible":            self.candidates_visible.isChecked(),
+                # Annotations
                 "draw_polarity_markers":         self.draw_pol.isChecked(),
                 "polarity_offset":               self.pol_offset.value(),
                 "draw_terminal_dots":            self.draw_dots.isChecked(),
                 "terminal_dot_radius":           self.dot_radius.value(),
+                "draw_pack_terminal_labels":     self.draw_pack_labels.isChecked(),
+                "draw_alignment_arrow":          self.draw_arrow.isChecked(),
+                "alignment_arrow_length":        self.arrow_length.value(),
+                # Z-layering
+                "auto_z":                        self.auto_z.isChecked(),
                 "plus_busbar_z":                 self.plus_busbar_z.value(),
                 "minus_busbar_z":                self.minus_busbar_z.value(),
+                # Routing
+                "draw_parallel_busbars":         self.grp_par.isChecked(),
+                "draw_busbar_solids":            self.busbar_solids.isChecked(),
+                "busbar_width":                  self.busbar_width.value(),
+                "busbar_thickness":              self.busbar_thickness.value(),
+                "draw_series_jumpers":           self.grp_ser.isChecked(),
+                "series_jumper_style":           self.jumper_style.currentText(),
+                # Alignment
+                "use_selected_edge_alignment":   self.use_edge_align.isChecked(),
+                "fallback_angle_deg":            self.fallback_angle.value(),
+                "edge_angle_offsets_deg":        self.edge_offsets.text(),
+                "angles_deg":                    self.angles.text(),
+                # Scoring
                 "prefer_shape_usage":            self.prefer_usage.isChecked(),
                 "shape_usage_weight":            self.w_usage.value(),
                 "compactness_weight":            self.w_compact.value(),
                 "center_bias_weight":            self.w_center.value(),
                 "row_shift_weight":              self.w_rowshift.value(),
                 "boundary_margin_penalty_weight": self.w_boundary.value(),
-                # non-GUI fields forwarded unchanged
+                # Non-GUI fields forwarded unchanged
                 "plus_busbar_color":             d["plus_busbar_color"],
                 "minus_busbar_color":            d["minus_busbar_color"],
                 "cell_fill_transparency":        d["cell_fill_transparency"],
             }
+
+        def reject(self):
+            if cleanup_fn is not None:
+                cleanup_fn()
+            super().reject()
 
     dlg = SettingsDialog(defaults)
     if dlg.exec_():

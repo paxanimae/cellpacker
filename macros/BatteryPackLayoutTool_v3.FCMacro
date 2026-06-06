@@ -104,16 +104,7 @@ def run() -> None:
                   f"{cfg['target_s']}s{cfg['target_p']}p pack.")
         print("─" * 50)
 
-        # ── Fit mode ─────────────────────────────────────────────────────
-        if cfg["mode"] == "fit":
-            grp = make_or_get_group(doc, "BatteryFit_AllCandidates")
-            draw_candidate_cells(doc, sketch_obj, best["points"],
-                                 params.radius, rotation, grp, cfg)
-            doc.recompute()
-            Gui.ActiveDocument.ActiveView.fitAll()
-            return
-
-        # ── Pack mode ─────────────────────────────────────────────────────
+        # ── Always run pack layout ───────────────────────────────────────
         new_root = f"BatteryPack_{cfg['target_s']}s{cfg['target_p']}p"
 
         # If S×P changed since last preview, the old root won't be cleaned
@@ -125,7 +116,7 @@ def run() -> None:
 
         groups = build_pack_groups(doc, new_root)
 
-        if cfg["draw_all_candidates"]:
+        if cfg.get("show_candidates", True):
             try:
                 groups["root"].addObject(groups["all_candidates"])
             except Exception:
@@ -133,6 +124,11 @@ def run() -> None:
             draw_candidate_cells(doc, sketch_obj, best["points"],
                                  params.radius, rotation,
                                  groups["all_candidates"], cfg)
+            if not cfg.get("candidates_visible", True):
+                try:
+                    groups["all_candidates"].ViewObject.Visibility = False
+                except Exception:
+                    pass
 
         if cfg["draw_alignment_arrow"]:
             draw_alignment_arrow(doc, sketch_obj, best["angle"],

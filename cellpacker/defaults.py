@@ -21,13 +21,10 @@ CELL_PRESETS: dict[str, tuple[float, float]] = {
 }
 
 DEFAULTS: dict = {
-    # ── Mode ──────────────────────────────────────────────────────────────
-    "mode": "pack",           # "fit" | "pack"
-
     # ── Cell geometry ─────────────────────────────────────────────────────
     "cell_diameter": 21.5,    # mm – physical diameter (incl. wrapper if relevant)
     "clearance": 0.8,         # mm – extra gap between cell surfaces
-    "cell_height": 70.0,      # mm – used for 3-D cylinders only
+    "cell_height": 70.0,      # mm – used for 3-D cylinders and Auto-Z
 
     # ── Pack topology ─────────────────────────────────────────────────────
     "target_s": 20,           # number of series groups
@@ -37,7 +34,8 @@ DEFAULTS: dict = {
     "make_2d": True,
     "make_3d": False,
     "make_labels": True,
-    "draw_all_candidates": True,
+    "show_candidates": True,       # overlay all candidate cell positions
+    "candidates_visible": True,    # whether that overlay is visible on open
 
     # ── Grid alignment ────────────────────────────────────────────────────
     "use_selected_edge_alignment": True,
@@ -56,8 +54,9 @@ DEFAULTS: dict = {
     "draw_busbar_solids": False,
     "busbar_width": 8.0,
     "busbar_thickness": 0.2,
-    "plus_busbar_z": 70.0,   # Z of + terminal busbar layer — keep equal to cell_height
-    "minus_busbar_z": 0.0,   # Z of − terminal busbar layer (cell base)
+    "auto_z": True,          # offset layers along sketch normal to match physical heights
+    "plus_busbar_z": 70.0,   # distance along sketch normal for + terminal layer
+    "minus_busbar_z": 0.0,   # distance along sketch normal for − terminal layer
 
     # ── Polarity markers ──────────────────────────────────────────────────
     "draw_pack_terminal_labels": True,   # large PACK+ / PACK- markers

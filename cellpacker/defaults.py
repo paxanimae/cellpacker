@@ -61,6 +61,7 @@ DEFAULTS: dict = {
     #   even groups → + terminal at bottom face, − terminal at top face
     "auto_z": True,
     "auto_z_step": 1.0,
+    "layer_z_candidates": 0.0,
 
     # ── Grid alignment ────────────────────────────────────────────────────
     "use_selected_edge_alignment": True,

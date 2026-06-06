@@ -108,7 +108,7 @@ def draw_candidate_cells(
     doc, sketch_obj, points, radius, rotation, group, cfg
 ) -> None:
     normal  = get_sketch_normal(sketch_obj)
-    cell_z  = cfg.get("layer_z_cells", 0.0)
+    cell_z  = cfg.get("layer_z_candidates", 0.0)
     for i, pt in enumerate(points, start=1):
         gpt = _layer_pt(to_global(sketch_obj, pt[0], pt[1]), normal, cell_z)
         if cfg["make_2d"]:

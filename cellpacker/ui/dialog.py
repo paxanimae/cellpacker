@@ -343,20 +343,21 @@ the dialog. Adjust and preview as many times as you like, then click
                 "Uncheck to draw everything on the sketch plane (all at offset = 0).")
             az = Qt.QFormLayout(self.auto_z_grp)
 
-            self.layer_z_minus = self._dspin(d.get("layer_z_minus", 0.0), -100.0, 100.0, 1)
-            self._row(az, "− layer offset (mm)", self.layer_z_minus,
-                "Offset for: minus busbar rail, (−) polarity markers, PACK− label.\n"
-                "Typically 0 — the bottom-most layer, sitting on the sketch plane.")
-
-            self.layer_z_cells = self._dspin(d.get("layer_z_cells", 1.0), -100.0, 100.0, 1)
-            self._row(az, "Cell layer offset (mm)", self.layer_z_cells,
-                "Offset for: cell circles, candidate circles, S/P text labels.\n"
-                "Should sit between the minus and plus layers.")
-
-            self.layer_z_plus = self._dspin(d.get("layer_z_plus", 2.0), -100.0, 100.0, 1)
-            self._row(az, "+ layer offset (mm)", self.layer_z_plus,
-                "Offset for: plus busbar rail, (+) polarity markers, PACK+ label.\n"
-                "Typically the top-most layer.")
+            self.auto_z_step = self._dspin(d.get("auto_z_step", 1.0), 0.1, 50.0, 1)
+            self._row(az, "Layer step (mm)", self.auto_z_step,
+                "Distance between adjacent layers along the sketch normal.\n"
+                "Each object type gets its own dedicated layer at index × step:\n"
+                "  0 × step  − busbar rails\n"
+                "  1 × step  (−) polarity markers and dots\n"
+                "  2 × step  candidate cell circles\n"
+                "  3 × step  selected cell circles\n"
+                "  4 × step  S/P text labels on cells\n"
+                "  5 × step  (+) polarity markers and dots\n"
+                "  6 × step  + busbar rails\n"
+                "  7 × step  series jumper wires\n"
+                "  8 × step  PACK+/PACK− output labels\n\n"
+                "Increase the step to spread layers further apart.\n"
+                "All layers = 0 when Auto-Z is unchecked.")
 
             f.addRow(self.auto_z_grp)
 
@@ -552,10 +553,7 @@ the dialog. Adjust and preview as many times as you like, then click
                 "alignment_arrow_length":        self.arrow_length.value(),
                 # Z-layer offsets: small visual offsets in 2D, physical in 3D
                 "auto_z":        auto_z,
-                "layer_z_minus": self.layer_z_minus.value() if auto_z else 0.0,
-                "layer_z_cells": self.layer_z_cells.value() if auto_z else 0.0,
-                "layer_z_plus":  (self.layer_z_plus.value() if auto_z
-                                  else (self.cell_height.value() if is_3d else 0.0)),
+                "auto_z_step":   self.auto_z_step.value(),
                 # Routing
                 "draw_parallel_busbars":         self.grp_par.isChecked(),
                 "draw_busbar_solids":            is_3d and self.busbar_solids.isChecked(),

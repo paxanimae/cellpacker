@@ -41,8 +41,8 @@ def draw_polarity_markers(
     sketch_normal: App.Vector | None = None,
 ) -> None:
     """Draw + / − text labels and optional terminal dots for every cell."""
-    plus_z  = cfg.get("layer_z_plus",  0.0)
-    minus_z = cfg.get("layer_z_minus", 0.0)
+    plus_z  = cfg.get("layer_z_plus_markers",  0.0)
+    minus_z = cfg.get("layer_z_minus_markers", 0.0)
     srot    = _sketch_rot(sketch_normal)
     for (s, p), info in terminal_lookup.items():
         name     = f"S{s:02d}_P{p:02d}"
@@ -78,19 +78,18 @@ def draw_pack_terminals(
     sorted_s  = sorted(selected_by_series.keys())
     s_first   = sorted_s[0]
     s_last    = sorted_s[-1]
-    plus_z  = cfg.get("layer_z_plus",  0.0)
-    minus_z = cfg.get("layer_z_minus", 0.0)
-    dot_r   = cfg.get("terminal_dot_radius", 1.5) * 3.0  # larger circle
+    pack_z = cfg.get("layer_z_pack", 0.0)
+    dot_r  = cfg.get("terminal_dot_radius", 1.5) * 3.0  # larger circle
 
-    def _rail_centroid(cells, polarity: str, z: float) -> App.Vector:
+    def _rail_centroid(cells, polarity: str) -> App.Vector:
         pts = [terminal_lookup[(c["series"], c["parallel"])][polarity] for c in cells]
         cx = sum(p.x for p in pts) / len(pts)
         cy = sum(p.y for p in pts) / len(pts)
         cz = sum(p.z for p in pts) / len(pts)
-        return _offset(App.Vector(cx, cy, cz), sketch_normal, z)
+        return _offset(App.Vector(cx, cy, cz), sketch_normal, pack_z)
 
-    neg_pt = _rail_centroid(selected_by_series[s_first], "minus", minus_z)
-    pos_pt = _rail_centroid(selected_by_series[s_last],  "plus",  plus_z)
+    neg_pt = _rail_centroid(selected_by_series[s_first], "minus")
+    pos_pt = _rail_centroid(selected_by_series[s_last],  "plus")
 
     srot = _sketch_rot(sketch_normal)
     draw_text(doc, neg_pt, "PACK-", "PackTerminal_NEG", group, color=(0.0, 0.0, 1.0), sketch_rotation=srot)

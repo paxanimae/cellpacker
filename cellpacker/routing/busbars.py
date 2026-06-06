@@ -111,8 +111,8 @@ def draw_parallel_busbars(
       ``<root>_Busbars_Plus``  offset *plus_busbar_z* mm along the sketch normal
       ``<root>_Busbars_Minus`` offset *minus_busbar_z* mm along the sketch normal
     """
-    plus_off  = cfg.get("layer_z_plus",  0.0)
-    minus_off = cfg.get("layer_z_minus", 0.0)
+    plus_off  = cfg.get("layer_z_plus_bus",  0.0)
+    minus_off = cfg.get("layer_z_minus_bus", 0.0)
 
     plus_color  = cfg.get("plus_busbar_color",  (0.85, 0.10, 0.10))
     minus_color = cfg.get("minus_busbar_color", (0.10, 0.10, 0.85))
@@ -165,12 +165,10 @@ def draw_series_jumpers(
     """
     Connect consecutive series groups.
 
-    Each jumper runs from the + terminal face of group S (offset
-    *plus_busbar_z* mm along the sketch normal) to the − terminal face of
-    group S+1 (offset *minus_busbar_z* mm).
+    Each jumper is drawn at its own dedicated series layer so it is
+    visually distinct from the parallel busbar rails.
     """
-    plus_off  = cfg.get("layer_z_plus",  0.0)
-    minus_off = cfg.get("layer_z_minus", 0.0)
+    series_off = cfg.get("layer_z_series", 0.0)
 
     grp = make_or_get_group(doc, root_name + "_Busbars_Series")
     _try_add(parent_group, grp)
@@ -185,8 +183,8 @@ def draw_series_jumpers(
         row_a  = selected_by_series[s]
         row_b  = selected_by_series[s_next]
 
-        plus_pts_a  = [_along_normal(terminal_lookup[(c["series"], c["parallel"])]["plus"],  sketch_normal, plus_off)  for c in row_a]
-        minus_pts_b = [_along_normal(terminal_lookup[(c["series"], c["parallel"])]["minus"], sketch_normal, minus_off) for c in row_b]
+        plus_pts_a  = [_along_normal(terminal_lookup[(c["series"], c["parallel"])]["plus"],  sketch_normal, series_off) for c in row_a]
+        minus_pts_b = [_along_normal(terminal_lookup[(c["series"], c["parallel"])]["minus"], sketch_normal, series_off) for c in row_b]
 
         color = get_series_color(s, total_s) if cfg["colorize_series"] else (0.20, 0.20, 0.20)
         label_base = f"BUS_SER_S{s:02d}_S{s_next:02d}"

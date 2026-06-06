@@ -41,10 +41,19 @@ DEFAULTS: dict = {
     # 2D + Auto-Z ON : small values (mm) that visually separate flat layers.
     # 2D + Auto-Z OFF: all zero — every object on the sketch plane.
     # 3D             : layer_z_plus = cell_height, rest = 0 (set by dialog).
+    # Auto-Z: each object type gets its own layer = index × auto_z_step (mm).
+    # Layer order (bottom → top):
+    #   0  layer_z_minus_bus      − parallel busbar rails
+    #   1  layer_z_minus_markers  (−) polarity dots + text
+    #   2  layer_z_candidates     candidate cell circles
+    #   3  layer_z_cells          selected cell circles
+    #   4  layer_z_cell_labels    S/P text on cells
+    #   5  layer_z_plus_markers   (+) polarity dots + text
+    #   6  layer_z_plus_bus       + parallel busbar rails
+    #   7  layer_z_series         series jumper wires
+    #   8  layer_z_pack           PACK+/PACK− labels
     "auto_z": True,
-    "layer_z_minus": 0.0,   # − busbar rail, (−) markers, PACK− label
-    "layer_z_cells": 1.0,   # cell disks, candidate circles, S/P text
-    "layer_z_plus":  2.0,   # + busbar rail, (+) markers, PACK+ label
+    "auto_z_step": 1.0,     # mm between each layer; all layers = index × step
 
     # ── Grid alignment ────────────────────────────────────────────────────
     "use_selected_edge_alignment": True,

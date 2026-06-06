@@ -109,7 +109,7 @@ def draw_candidate_cells(
     doc, sketch_obj, points, radius, rotation, group, cfg
 ) -> None:
     normal  = get_sketch_normal(sketch_obj)
-    cell_z  = cfg.get("layer_z_cells", 0.0)
+    cell_z  = cfg.get("layer_z_candidates", cfg.get("layer_z_cells", 0.0))
     for i, pt in enumerate(points, start=1):
         gpt = _layer_pt(to_global(sketch_obj, pt[0], pt[1]), normal, cell_z)
         if cfg["make_2d"]:
@@ -132,8 +132,10 @@ def draw_selected_cell(
         draw_cylinder(doc, gpt, radius, cfg["cell_height"], rotation,
                       name + "_3D", group, color=color)
     if cfg["make_labels"]:
-        srot = App.Rotation(App.Vector(0, 0, 1), normal)
-        draw_text(doc, gpt, f"{cell['series']}/{cell['parallel']}",
+        label_z  = cfg.get("layer_z_cell_labels", 0.0)
+        label_pt = _layer_pt(to_global(sketch_obj, cell["x"], cell["y"]), normal, label_z)
+        srot     = App.Rotation(App.Vector(0, 0, 1), normal)
+        draw_text(doc, label_pt, f"{cell['series']}/{cell['parallel']}",
                   name + "_TXT", group, color=color, sketch_rotation=srot)
     return gpt
 

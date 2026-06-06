@@ -40,6 +40,7 @@ from cellpacker.geometry.face import get_local_face
 from cellpacker.geometry.grid import grid_params_from_config
 from cellpacker.geometry.transforms import get_edge_angle_in_local_coords
 from cellpacker.layout.sweep import sweep_angles
+from cellpacker.geometry.layers import build_layers
 from cellpacker.layout.selector import build_selected_by_series
 from cellpacker.drawing.cells import (
     make_or_get_group,
@@ -75,6 +76,9 @@ def run() -> None:
 
     def _draw(cfg: dict) -> None:
         """Run layout + draw for *cfg*.  Called by Preview button and OK."""
+        # Merge per-type layer Z offsets into cfg so all drawing functions
+        # can look them up by key without needing extra arguments.
+        cfg = {**cfg, **build_layers(cfg)}
         params = grid_params_from_config(cfg)
 
         # Build angle list

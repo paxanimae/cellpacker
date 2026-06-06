@@ -12,6 +12,19 @@ from cellpacker.geometry.transforms import rotate_2d, to_global
 from cellpacker.drawing.primitives import draw_text, draw_circle_outline, draw_polyline
 
 
+def _sketch_rot(normal: App.Vector | None) -> App.Rotation:
+    """Return the rotation that places Draft objects flat in the sketch plane.
+
+    Draft.makeCircle / Draft.make_text draw in the XY plane of their
+    placement (normal = placement Z-axis).  To get them into the sketch
+    plane we need a rotation that maps world-Z to the sketch normal.
+    """
+    import FreeCAD as App
+    if normal is None:
+        return App.Rotation()
+    return App.Rotation(App.Vector(0, 0, 1), normal)
+
+
 def _offset(pt: App.Vector, normal: App.Vector | None, z: float) -> App.Vector:
     if not normal or z == 0.0:
         return pt
@@ -30,19 +43,20 @@ def draw_polarity_markers(
     """Draw + / − text labels and optional terminal dots for every cell."""
     plus_z  = cfg.get("layer_z_plus",  0.0)
     minus_z = cfg.get("layer_z_minus", 0.0)
+    srot    = _sketch_rot(sketch_normal)
     for (s, p), info in terminal_lookup.items():
         name     = f"S{s:02d}_P{p:02d}"
         plus_pt  = _offset(info["plus"],  sketch_normal, plus_z)
         minus_pt = _offset(info["minus"], sketch_normal, minus_z)
 
         if cfg["draw_polarity_markers"]:
-            draw_text(doc, plus_pt,  "(+)", name + "_PLUS",  group, color=(0.8, 0.0, 0.0))
-            draw_text(doc, minus_pt, "(-)", name + "_MINUS", group, color=(0.0, 0.0, 0.8))
+            draw_text(doc, plus_pt,  "(+)", name + "_PLUS",  group, color=(0.8, 0.0, 0.0), sketch_rotation=srot)
+            draw_text(doc, minus_pt, "(-)", name + "_MINUS", group, color=(0.0, 0.0, 0.8), sketch_rotation=srot)
 
         if cfg["draw_terminal_dots"]:
             r = cfg["terminal_dot_radius"]
-            draw_circle_outline(doc, plus_pt,  r, name + "_PLUS_DOT",  group, color=(0.9, 0.1, 0.1))
-            draw_circle_outline(doc, minus_pt, r, name + "_MINUS_DOT", group, color=(0.1, 0.1, 0.9))
+            draw_circle_outline(doc, plus_pt,  r, name + "_PLUS_DOT",  group, color=(0.9, 0.1, 0.1), sketch_rotation=srot)
+            draw_circle_outline(doc, minus_pt, r, name + "_MINUS_DOT", group, color=(0.1, 0.1, 0.9), sketch_rotation=srot)
 
 
 def draw_pack_terminals(
@@ -78,10 +92,11 @@ def draw_pack_terminals(
     neg_pt = _rail_centroid(selected_by_series[s_first], "minus", minus_z)
     pos_pt = _rail_centroid(selected_by_series[s_last],  "plus",  plus_z)
 
-    draw_text(doc, neg_pt, "PACK-", "PackTerminal_NEG", group, color=(0.0, 0.0, 1.0))
-    draw_text(doc, pos_pt, "PACK+", "PackTerminal_POS", group, color=(1.0, 0.0, 0.0))
-    draw_circle_outline(doc, neg_pt, dot_r, "PackTerminal_NEG_ring", group, color=(0.0, 0.0, 1.0))
-    draw_circle_outline(doc, pos_pt, dot_r, "PackTerminal_POS_ring", group, color=(1.0, 0.0, 0.0))
+    srot = _sketch_rot(sketch_normal)
+    draw_text(doc, neg_pt, "PACK-", "PackTerminal_NEG", group, color=(0.0, 0.0, 1.0), sketch_rotation=srot)
+    draw_text(doc, pos_pt, "PACK+", "PackTerminal_POS", group, color=(1.0, 0.0, 0.0), sketch_rotation=srot)
+    draw_circle_outline(doc, neg_pt, dot_r, "PackTerminal_NEG_ring", group, color=(0.0, 0.0, 1.0), sketch_rotation=srot)
+    draw_circle_outline(doc, pos_pt, dot_r, "PackTerminal_POS_ring", group, color=(1.0, 0.0, 0.0), sketch_rotation=srot)
 
 
 def draw_alignment_arrow(

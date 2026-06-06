@@ -132,8 +132,9 @@ def draw_selected_cell(
         draw_cylinder(doc, gpt, radius, cfg["cell_height"], rotation,
                       name + "_3D", group, color=color)
     if cfg["make_labels"]:
+        srot = App.Rotation(App.Vector(0, 0, 1), normal)
         draw_text(doc, gpt, f"{cell['series']}/{cell['parallel']}",
-                  name + "_TXT", group, color=color)
+                  name + "_TXT", group, color=color, sketch_rotation=srot)
     return gpt
 
 

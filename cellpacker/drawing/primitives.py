@@ -88,13 +88,13 @@ def draw_text(
     label: str,
     group,
     color: tuple | None = None,
+    sketch_rotation: App.Rotation | None = None,
 ) -> object:
-    """Place a text label, compatible with FreeCAD 0.x and 1.x."""
+    """Place a text label in the sketch plane."""
+    rot = sketch_rotation if sketch_rotation is not None else App.Rotation()
     try:
-        # FreeCAD 1.x preferred API
-        txt = Draft.make_text([text], placement=App.Placement(global_pt, App.Rotation()))
+        txt = Draft.make_text([text], placement=App.Placement(global_pt, rot))
     except AttributeError:
-        # FreeCAD 0.x fallback
         txt = Draft.makeText([text], point=global_pt)
     txt.Label = label
     group.addObject(txt)
@@ -125,9 +125,11 @@ def draw_circle_outline(
     label: str,
     group,
     color: tuple | None = None,
+    sketch_rotation: App.Rotation | None = None,
 ) -> object:
+    rot = sketch_rotation if sketch_rotation is not None else App.Rotation()
     circ = Draft.makeCircle(
-        radius, placement=App.Placement(global_pt, App.Rotation())
+        radius, placement=App.Placement(global_pt, rot)
     )
     circ.Label = label
     group.addObject(circ)

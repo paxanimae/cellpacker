@@ -1,7 +1,7 @@
 """
 cellpacker.ui.dialog
 ~~~~~~~~~~~~~~~~~~~~~
-PySide2 settings dialog.  Returns a cfg dict on acceptance or ``None``
+PySide2/6 settings dialog.  Returns a cfg dict on acceptance or ``None``
 on cancellation.
 """
 
@@ -31,21 +31,21 @@ def get_user_settings(
         def __init__(self, defs: dict) -> None:
             super().__init__()
             self.setWindowTitle("Battery Pack Layout Tool")
-            self.resize(800, 680)
+            self.resize(820, 700)
             self._defs = defs
 
             root = Qt.QVBoxLayout(self)
             tabs = Qt.QTabWidget()
             root.addWidget(tabs)
 
-            tabs.addTab(self._make_help_tab(),      "Help")
-            tabs.addTab(self._make_pack_tab(),      "Pack")
-            tabs.addTab(self._make_display_tab(),   "Display")
-            tabs.addTab(self._make_routing_tab(),   "Routing")
-            tabs.addTab(self._make_align_tab(),     "Alignment")
-            tabs.addTab(self._make_score_tab(),     "Scoring")
+            tabs.addTab(self._make_help_tab(),    "Help")
+            tabs.addTab(self._make_pack_tab(),    "Pack")
+            tabs.addTab(self._make_display_tab(), "Display")
+            tabs.addTab(self._make_routing_tab(), "Routing")
+            tabs.addTab(self._make_align_tab(),   "Alignment")
+            tabs.addTab(self._make_score_tab(),   "Scoring")
 
-            # Apply initial Auto-Z state (connects/disconnects cell_height signal).
+            self._auto_z_signal_connected = False
             self._on_auto_z(self.auto_z.isChecked())
 
             btns = Qt.QDialogButtonBox(
@@ -57,14 +57,23 @@ def get_user_settings(
             if preview_fn is not None:
                 prev = btns.addButton("Preview", Qt.QDialogButtonBox.ActionRole)
                 prev.setToolTip(
-                    "Run the layout with current settings and draw into the viewport.\n"
-                    "Adjust settings and click again to update."
+                    "Run the layout with the current settings and draw it into\n"
+                    "the FreeCAD viewport — without closing this dialog.\n"
+                    "Adjust settings and click Preview again to update."
                 )
                 prev.clicked.connect(lambda: preview_fn(self.values()))
 
             root.addWidget(btns)
 
-        # ── Helpers ───────────────────────────────────────────────────────
+        # ── Widget helpers ────────────────────────────────────────────────
+
+        @staticmethod
+        def _row(form, label_text: str, widget, tip: str):
+            """Add a labelled row with the same tooltip on both label and widget."""
+            widget.setToolTip(tip)
+            lbl = Qt.QLabel(label_text)
+            lbl.setToolTip(tip)
+            form.addRow(lbl, widget)
 
         @staticmethod
         def _dspin(val, lo, hi, decimals=3):
@@ -88,8 +97,8 @@ def get_user_settings(
             return cb
 
         @staticmethod
-        def _sep(text=""):
-            lbl = Qt.QLabel(f"<b>{text}</b>" if text else "")
+        def _head(text):
+            lbl = Qt.QLabel(f"<b>{text}</b>")
             return lbl
 
         # ── Tab: Help ─────────────────────────────────────────────────────
@@ -101,23 +110,23 @@ def get_user_settings(
             te.setReadOnly(True)
             te.setHtml("""
 <h2>Battery Pack Layout Tool</h2>
-<p><b>1.</b> Draw a closed sketch for the pack outline. Select it (Ctrl-select
-a straight edge to align the grid to it), then run this macro.</p>
-<p><b>2.</b> Set cell type, series groups (S) and parallel cells (P)
-in the <b>Pack</b> tab.</p>
+<p><b>1.</b> Draw a closed sketch for the pack outline. Select it
+(Ctrl-select a straight edge to align the grid to it), then run this macro.</p>
+<p><b>2.</b> Set the cell type, series (S) and parallel (P) count in the
+<b>Pack</b> tab.</p>
 <p><b>3.</b> Choose what to render in the <b>Display</b> tab.
-Enable <i>Auto-Z</i> to separate layers by their physical height —
-minus terminal at the base, cells in the middle, plus terminal at the top.</p>
-<p><b>4.</b> Configure busbars in the <b>Routing</b> tab.
-Uncheck the group header to disable that busbar type entirely.</p>
+Turn on <i>Auto-Z</i> to separate busbar layers by their physical height
+(minus terminal at the base, plus terminal at the top).</p>
+<p><b>4.</b> Configure busbars in the <b>Routing</b> tab. Uncheck a group
+header to disable that busbar type entirely.</p>
 <p><b>5.</b> Click <b>Preview</b> to draw into the viewport without closing
 the dialog. Adjust and preview as many times as you like, then click
-<b>OK</b> to finalise.</p>
+<b>OK</b> to finalise. <b>Cancel</b> removes any preview from the document.</p>
 <pre>
-  Candidates:          Selected 5s5p:       Busbars:
-   o o o o o           S01: + + + + +       ─── parallel rail (+ terminal face)
-    o o o o             S02: - - - - -       ─── parallel rail (− terminal face)
-   o o o o o           S03: + + + + +       ╱   series jumpers (between groups)
+  Candidates:          Selected 5s5p:         Busbars:
+   o o o o o           S01: + + + + +         ─── parallel rail (+ face)
+    o o o o             S02: - - - - -         ─── parallel rail (- face)
+   o o o o o           S03: + + + + +         ╱   series jumpers
 </pre>
 """)
             lay.addWidget(te)
@@ -130,39 +139,64 @@ the dialog. Adjust and preview as many times as you like, then click
             f = Qt.QFormLayout(w)
             d = self._defs
 
-            # Cell type preset
+            f.addRow(self._head("Cell dimensions"))
+
             self.cell_type = Qt.QComboBox()
             self.cell_type.addItem("Custom")
             for name in CELL_PRESETS:
                 self.cell_type.addItem(name)
-            f.addRow("Cell type", self.cell_type)
+            self._row(f, "Cell type", self.cell_type,
+                "Standard cylindrical cell formats.\n"
+                "Selecting one fills in diameter and height automatically.\n"
+                "18650 = 18.4 mm × 65 mm  |  21700 = 21 mm × 70 mm  |  etc.\n"
+                "Choose 'Custom' to enter your own values.")
 
             self.cell_diameter = self._dspin(d["cell_diameter"], 1.0, 100.0)
-            f.addRow("Cell diameter (mm)", self.cell_diameter)
+            self._row(f, "Cell diameter (mm)", self.cell_diameter,
+                "Outer diameter of the cell including any shrink-wrap sleeve.\n"
+                "Add a little extra if the cells are a tight fit in your enclosure.")
 
             self.clearance = self._dspin(d["clearance"], 0.0, 20.0)
-            f.addRow("Clearance (mm)", self.clearance)
+            self._row(f, "Clearance (mm)", self.clearance,
+                "Minimum air gap between adjacent cells.\n"
+                "Pitch = diameter + clearance.\n"
+                "Increase for airflow, glue, or structural material between cells.")
 
             self.cell_height = self._dspin(d["cell_height"], 1.0, 200.0)
-            f.addRow("Cell height (mm)", self.cell_height)
+            self._row(f, "Cell height (mm)", self.cell_height,
+                "Total height of the cell from base to top cap.\n"
+                "Used for 3D cylinders and, when Auto-Z is on, sets the\n"
+                "height of the positive-terminal busbar layer automatically.")
 
-            f.addRow(self._sep())
-            f.addRow(self._sep("Pack topology"))
+            f.addRow(Qt.QLabel(""))
+            f.addRow(self._head("Pack topology"))
 
             self.target_s = self._spin(d["target_s"], 1, 200)
-            f.addRow("Series groups (S)", self.target_s)
+            self._row(f, "Series groups (S)", self.target_s,
+                "Number of series-connected cell groups.\n"
+                "More series groups = higher pack voltage.\n"
+                "Example: 20S Li-ion ≈ 72 V nominal.")
 
             self.target_p = self._spin(d["target_p"], 1, 100)
-            f.addRow("Parallel cells (P)", self.target_p)
+            self._row(f, "Parallel cells (P)", self.target_p,
+                "Number of cells in each parallel group.\n"
+                "More parallel cells = higher capacity (Ah).\n"
+                "Example: 5P × 3 Ah cells = 15 Ah total.")
 
-            f.addRow(self._sep())
-            f.addRow(self._sep("Series layout"))
+            f.addRow(Qt.QLabel(""))
+            f.addRow(self._head("Series layout"))
 
             self.colorize_series = self._check(d["colorize_series"])
-            f.addRow("Colorize by series group", self.colorize_series)
+            self._row(f, "Colorize by series group", self.colorize_series,
+                "Give each series group a unique colour so you can visually\n"
+                "trace series connections across the pack.")
 
             self.snake = self._check(d["snake_series_order"])
-            f.addRow("Snake series order", self.snake)
+            self._row(f, "Snake series order", self.snake,
+                "Alternate the wiring direction of each series group:\n"
+                "group 1 goes left → right, group 2 right → left, and so on.\n"
+                "This minimises the length of the jumper wires between groups\n"
+                "because each group connects to the one directly next to it.")
 
             # ── Preset logic ──────────────────────────────────────────────
             def _apply_preset(_idx):
@@ -193,61 +227,119 @@ the dialog. Adjust and preview as many times as you like, then click
             f = Qt.QFormLayout(inner)
 
             # ── Render objects ────────────────────────────────────────────
-            f.addRow(self._sep("Render objects"))
+            f.addRow(self._head("Render objects"))
+
             self.make_2d = self._check(d["make_2d"])
-            f.addRow("Draw 2D cell disks", self.make_2d)
+            self._row(f, "Draw 2D cell disks", self.make_2d,
+                "Draw a flat filled circle for each cell position on the sketch plane.\n"
+                "Good for layout planning, DXF export, and laser-cut templates.")
+
             self.make_3d = self._check(d["make_3d"])
-            f.addRow("Draw 3D cell cylinders", self.make_3d)
+            self._row(f, "Draw 3D cell cylinders", self.make_3d,
+                "Draw a 3D solid cylinder for each cell.\n"
+                "Use this when you need a 3D model for enclosure or housing design.")
+
             self.make_labels = self._check(d["make_labels"])
-            f.addRow("Draw S/P labels on cells", self.make_labels)
+            self._row(f, "Draw S/P labels on cells", self.make_labels,
+                "Print the series/parallel index on each cell (e.g. S03/P2).\n"
+                "Helps when manually wiring a pack — you can see exactly which\n"
+                "cell belongs to which series group and parallel position.")
 
             # ── Candidate overlay ─────────────────────────────────────────
-            f.addRow(self._sep())
-            f.addRow(self._sep("Candidate cell overlay"))
+            f.addRow(Qt.QLabel(""))
+            f.addRow(self._head("Candidate cell overlay"))
+
             self.show_candidates = self._check(d.get("show_candidates", True))
-            f.addRow("Show all candidate positions", self.show_candidates)
+            self._row(f, "Show all candidate positions", self.show_candidates,
+                "Draw a grey circle for every position where a cell could fit\n"
+                "inside the outline — not just the selected pack cells.\n"
+                "Useful for checking packing density and unused space.")
+
             self.candidates_visible = self._check(d.get("candidates_visible", True))
-            f.addRow("  Visible in viewport", self.candidates_visible)
+            self._row(f, "  Initially visible", self.candidates_visible,
+                "Whether the candidate overlay is shown when the macro finishes.\n"
+                "You can toggle it later in the model tree without re-running.")
+
             self.show_candidates.stateChanged.connect(
                 lambda s: self.candidates_visible.setEnabled(bool(s))
             )
             self.candidates_visible.setEnabled(self.show_candidates.isChecked())
 
             # ── Annotations ───────────────────────────────────────────────
-            f.addRow(self._sep())
-            f.addRow(self._sep("Annotations"))
+            f.addRow(Qt.QLabel(""))
+            f.addRow(self._head("Annotations"))
+
             self.draw_pol = self._check(d["draw_polarity_markers"])
-            f.addRow("Draw (+) / (-) markers per cell", self.draw_pol)
+            self._row(f, "Draw (+) / (−) markers per cell", self.draw_pol,
+                "Place a small (+) or (−) label at each cell's positive and\n"
+                "negative terminal position.\n"
+                "Odd series groups have + at the top, even groups have + at the bottom\n"
+                "(alternating polarity convention for series-wired packs).")
+
             self.draw_dots = self._check(d["draw_terminal_dots"])
-            f.addRow("Draw terminal dots", self.draw_dots)
+            self._row(f, "Draw terminal dots", self.draw_dots,
+                "Draw a small circle at each terminal position to mark the\n"
+                "exact point where a busbar or wire connects.")
+
             self.dot_radius = self._dspin(d["terminal_dot_radius"], 0.1, 20.0)
-            f.addRow("  Dot radius (mm)", self.dot_radius)
+            self._row(f, "  Terminal dot radius (mm)", self.dot_radius,
+                "Radius of the terminal dot circles in mm.")
+
             self.pol_offset = self._dspin(d["polarity_offset"], 0.1, 50.0)
-            f.addRow("  Polarity offset from centre (mm)", self.pol_offset)
+            self._row(f, "  Polarity offset from centre (mm)", self.pol_offset,
+                "How far the (+)/(−) marker is placed from the cell centre.\n"
+                "Set this to just above the cell radius so markers appear\n"
+                "at the terminal face rather than inside the cell body.")
+
             self.draw_pack_labels = self._check(d.get("draw_pack_terminal_labels", True))
-            f.addRow("Draw PACK+ / PACK- output labels", self.draw_pack_labels)
+            self._row(f, "Draw PACK+ / PACK− output labels", self.draw_pack_labels,
+                "Mark the two output terminals of the whole battery pack:\n"
+                "  PACK−  = the free negative rail of the first series group\n"
+                "  PACK+  = the free positive rail of the last series group\n"
+                "These are the points you connect your load or BMS to.")
+
             self.draw_arrow = self._check(d["draw_alignment_arrow"])
-            f.addRow("Draw grid alignment arrow", self.draw_arrow)
+            self._row(f, "Draw grid alignment arrow", self.draw_arrow,
+                "Draw an arrow showing the direction the hex grid is aligned to.\n"
+                "Useful for verifying that edge alignment worked correctly.")
+
             self.arrow_length = self._dspin(d["alignment_arrow_length"], 1.0, 1000.0)
-            f.addRow("  Arrow length (mm)", self.arrow_length)
+            self._row(f, "  Arrow length (mm)", self.arrow_length,
+                "Length of the alignment direction arrow in mm.")
 
             # ── Z-layering ────────────────────────────────────────────────
-            f.addRow(self._sep())
-            f.addRow(self._sep("Z-layering"))
+            f.addRow(Qt.QLabel(""))
+            f.addRow(self._head("Z-layering"))
+
             self.auto_z = self._check(d.get("auto_z", True))
-            f.addRow("Auto-Z (physical layer heights)", self.auto_z)
+            self._row(f, "Auto-Z (physical layer heights)", self.auto_z,
+                "Place each busbar layer at its real physical height above the\n"
+                "sketch plane, following the logic of the actual battery pack:\n"
+                "  − terminal busbars  →  Z = 0  (cell base / bottom face)\n"
+                "  + terminal busbars  →  Z = cell height  (cell top face)\n"
+                "  Series jumpers connect between these two heights.\n\n"
+                "Turn OFF to draw everything flat on the sketch plane (Z = 0),\n"
+                "for a purely 2D top-down layout.")
+
             note = Qt.QLabel(
-                "  Auto-Z ON: layers follow physical cell height.\n"
-                "  Auto-Z OFF: everything drawn flat on the sketch plane (Z = 0)."
+                "When Auto-Z is ON the Z fields below are read-only and\n"
+                "track the cell height automatically.\n"
+                "Turn Auto-Z OFF to enter custom values per layer."
             )
             note.setWordWrap(True)
             f.addRow(note)
-            self.minus_busbar_z = self._dspin(d["minus_busbar_z"], -500.0, 500.0)
-            f.addRow("  − terminal layer Z (mm)", self.minus_busbar_z)
-            self.plus_busbar_z = self._dspin(d["plus_busbar_z"], -500.0, 500.0)
-            f.addRow("  + terminal layer Z (mm)", self.plus_busbar_z)
 
-            self._auto_z_signal_connected = False
+            self.minus_busbar_z = self._dspin(d["minus_busbar_z"], -500.0, 500.0)
+            self._row(f, "  − terminal layer Z (mm)", self.minus_busbar_z,
+                "Height of the negative-terminal busbar layer along the sketch normal.\n"
+                "Physical value: 0 mm (cell base). Only editable when Auto-Z is OFF.")
+
+            self.plus_busbar_z = self._dspin(d["plus_busbar_z"], -500.0, 500.0)
+            self._row(f, "  + terminal layer Z (mm)", self.plus_busbar_z,
+                "Height of the positive-terminal busbar layer along the sketch normal.\n"
+                "Physical value: cell height. When Auto-Z is ON this tracks the\n"
+                "cell height field in the Pack tab automatically.")
+
             self.auto_z.stateChanged.connect(self._on_auto_z)
 
             scroll.setWidget(inner)
@@ -281,26 +373,56 @@ the dialog. Adjust and preview as many times as you like, then click
             self.grp_par = Qt.QGroupBox("Parallel busbars")
             self.grp_par.setCheckable(True)
             self.grp_par.setChecked(d["draw_parallel_busbars"])
+            self.grp_par.setToolTip(
+                "Busbars that connect cells within the same series group in parallel.\n"
+                "There is one busbar on the positive-terminal face and one on\n"
+                "the negative-terminal face of each series group.\n"
+                "Uncheck this box to skip drawing parallel busbars entirely.")
             fpar = Qt.QFormLayout(self.grp_par)
 
             self.busbar_solids = self._check(d["draw_busbar_solids"])
-            fpar.addRow("Draw as solid strips", self.busbar_solids)
+            self._row(fpar, "Draw as solid strips", self.busbar_solids,
+                "Create solid 3D rectangular strips for each busbar segment\n"
+                "instead of simple wire lines.\n"
+                "More physically accurate but slower to generate.\n"
+                "Solid strip dimensions are controlled by Width and Thickness below.")
+
             self.busbar_width = self._dspin(d["busbar_width"], 0.1, 100.0)
-            fpar.addRow("Width (mm)", self.busbar_width)
+            self._row(fpar, "Width (mm)", self.busbar_width,
+                "Physical width of the busbar strip in mm.\n"
+                "For nickel strip this is typically 6–10 mm.\n"
+                "In wire mode this also scales the line thickness in the viewport.")
+
             self.busbar_thickness = self._dspin(d["busbar_thickness"], 0.01, 20.0)
-            fpar.addRow("Thickness (mm)", self.busbar_thickness)
+            self._row(fpar, "Thickness (mm)", self.busbar_thickness,
+                "Thickness of the solid busbar strip in mm.\n"
+                "For pure nickel strip: 0.1–0.3 mm.  For copper strip: 0.1–0.5 mm.\n"
+                "Only used when 'Draw as solid strips' is enabled.")
             lay.addWidget(self.grp_par)
 
             # ── Series jumpers ────────────────────────────────────────────
             self.grp_ser = Qt.QGroupBox("Series jumpers")
             self.grp_ser.setCheckable(True)
             self.grp_ser.setChecked(d["draw_series_jumpers"])
+            self.grp_ser.setToolTip(
+                "Busbars that connect the positive rail of one series group to\n"
+                "the negative rail of the next group, forming the series chain.\n"
+                "These carry the full pack current and run between terminal faces.\n"
+                "Uncheck this box to skip drawing series jumpers entirely.")
             fser = Qt.QFormLayout(self.grp_ser)
 
             self.jumper_style = Qt.QComboBox()
             self.jumper_style.addItems(["paired", "rail", "single"])
             self.jumper_style.setCurrentText(str(d.get("series_jumper_style", "paired")))
-            fser.addRow("Jumper style", self.jumper_style)
+            self._row(fser, "Jumper style", self.jumper_style,
+                "How series jumpers are drawn between adjacent groups:\n\n"
+                "  paired  – One jumper per parallel cell. The leftmost cell of\n"
+                "            group S connects to the leftmost of group S+1, etc.\n"
+                "            Most realistic for nickel-strip packs.\n\n"
+                "  rail    – A single jumper between the nearest endpoints of\n"
+                "            the two parallel rails. Simplest representation.\n\n"
+                "  single  – One jumper from any terminal of group S to any\n"
+                "            terminal of group S+1 (legacy, least accurate).")
             lay.addWidget(self.grp_ser)
 
             lay.addStretch()
@@ -314,16 +436,29 @@ the dialog. Adjust and preview as many times as you like, then click
             d = self._defs
 
             self.use_edge_align = self._check(d["use_selected_edge_alignment"])
-            f.addRow("Align grid to selected edge", self.use_edge_align)
+            self._row(f, "Align grid to selected edge", self.use_edge_align,
+                "Use the angle of the Ctrl-selected edge to align the hex grid.\n"
+                "Select a frame tube, wall, or any straight edge before running\n"
+                "the macro to make the cell rows run parallel to it.\n"
+                "If no edge is selected, the fallback angle is used instead.")
 
             self.fallback_angle = self._dspin(d["fallback_angle_deg"], -360.0, 360.0)
-            f.addRow("Fallback angle (deg)", self.fallback_angle)
+            self._row(f, "Fallback angle (deg)", self.fallback_angle,
+                "Grid angle to use when no edge is selected or edge alignment\n"
+                "is disabled. 0° = rows run horizontally.")
 
             self.edge_offsets = Qt.QLineEdit(str(d["edge_angle_offsets_deg"]))
-            f.addRow("Edge angle offsets (deg, CSV)", self.edge_offsets)
+            self._row(f, "Edge angle offsets (deg, CSV)", self.edge_offsets,
+                "Comma-separated list of angle offsets to try relative to the\n"
+                "detected edge angle. The layout is computed for each offset\n"
+                "and the best result is kept.\n"
+                "Example: '0, 5, -5' tries the edge angle ± 5 degrees.")
 
             self.angles = Qt.QLineEdit(str(d["angles_deg"]))
-            f.addRow("Angle sweep (deg, CSV)", self.angles)
+            self._row(f, "Angle sweep (deg, CSV)", self.angles,
+                "Comma-separated list of absolute grid angles to try when edge\n"
+                "alignment is disabled. The best-scoring result is kept.\n"
+                "More angles = better chance of a good fit, but slower.")
 
             return w
 
@@ -334,23 +469,44 @@ the dialog. Adjust and preview as many times as you like, then click
             f = Qt.QFormLayout(w)
             d = self._defs
 
+            f.addRow(Qt.QLabel(
+                "Scoring weights control how the algorithm chooses between\n"
+                "candidate layouts when several equally-sized windows exist.\n"
+                "Higher weight = that criterion matters more."
+            ))
+            f.addRow(Qt.QLabel(""))
+
             self.prefer_usage = self._check(d["prefer_shape_usage"])
-            f.addRow("Prefer shape usage", self.prefer_usage)
+            self._row(f, "Prefer shape usage", self.prefer_usage,
+                "When ON, the scorer strongly rewards layouts that fill more\n"
+                "of the outline area, even if the pack is less compact.\n"
+                "Turn OFF to let the other weights decide.")
 
             self.w_usage = self._dspin(d["shape_usage_weight"], 0.0, 50.0)
-            f.addRow("Shape usage weight", self.w_usage)
+            self._row(f, "Shape usage weight", self.w_usage,
+                "How much to reward using a larger fraction of the outline area.\n"
+                "Increase to pack cells closer to the boundary.")
 
             self.w_compact = self._dspin(d["compactness_weight"], 0.0, 50.0)
-            f.addRow("Compactness weight", self.w_compact)
+            self._row(f, "Compactness weight", self.w_compact,
+                "How much to reward packs where selected cells are clustered\n"
+                "together with minimal internal gaps.")
 
             self.w_center = self._dspin(d["center_bias_weight"], 0.0, 50.0)
-            f.addRow("Center bias weight", self.w_center)
+            self._row(f, "Center bias weight", self.w_center,
+                "How much to reward packs whose centre of mass is close to\n"
+                "the centre of the outline. Useful for symmetric shapes.")
 
             self.w_rowshift = self._dspin(d["row_shift_weight"], 0.0, 50.0)
-            f.addRow("Row shift weight", self.w_rowshift)
+            self._row(f, "Row shift weight", self.w_rowshift,
+                "Penalty for large X-offset differences between adjacent series\n"
+                "rows. Higher values encourage straighter, more rectangular packs\n"
+                "where series jumper wires are all roughly the same length.")
 
             self.w_boundary = self._dspin(d["boundary_margin_penalty_weight"], 0.0, 50.0)
-            f.addRow("Boundary margin penalty weight", self.w_boundary)
+            self._row(f, "Boundary margin penalty weight", self.w_boundary,
+                "Penalty for cells that sit very close to the outline boundary.\n"
+                "Increase to keep cells away from the edge (e.g. for wall clearance).")
 
             return w
 
@@ -359,22 +515,18 @@ the dialog. Adjust and preview as many times as you like, then click
         def values(self) -> dict:
             d = self._defs
             return {
-                # Cell geometry
                 "cell_diameter":                 self.cell_diameter.value(),
                 "clearance":                     self.clearance.value(),
                 "cell_height":                   self.cell_height.value(),
-                # Pack topology
                 "target_s":                      self.target_s.value(),
                 "target_p":                      self.target_p.value(),
                 "colorize_series":               self.colorize_series.isChecked(),
                 "snake_series_order":            self.snake.isChecked(),
-                # Output flags
                 "make_2d":                       self.make_2d.isChecked(),
                 "make_3d":                       self.make_3d.isChecked(),
                 "make_labels":                   self.make_labels.isChecked(),
                 "show_candidates":               self.show_candidates.isChecked(),
                 "candidates_visible":            self.candidates_visible.isChecked(),
-                # Annotations
                 "draw_polarity_markers":         self.draw_pol.isChecked(),
                 "polarity_offset":               self.pol_offset.value(),
                 "draw_terminal_dots":            self.draw_dots.isChecked(),
@@ -382,30 +534,25 @@ the dialog. Adjust and preview as many times as you like, then click
                 "draw_pack_terminal_labels":     self.draw_pack_labels.isChecked(),
                 "draw_alignment_arrow":          self.draw_arrow.isChecked(),
                 "alignment_arrow_length":        self.arrow_length.value(),
-                # Z-layering
                 "auto_z":                        self.auto_z.isChecked(),
                 "plus_busbar_z":                 self.plus_busbar_z.value(),
                 "minus_busbar_z":                self.minus_busbar_z.value(),
-                # Routing
                 "draw_parallel_busbars":         self.grp_par.isChecked(),
                 "draw_busbar_solids":            self.busbar_solids.isChecked(),
                 "busbar_width":                  self.busbar_width.value(),
                 "busbar_thickness":              self.busbar_thickness.value(),
                 "draw_series_jumpers":           self.grp_ser.isChecked(),
                 "series_jumper_style":           self.jumper_style.currentText(),
-                # Alignment
                 "use_selected_edge_alignment":   self.use_edge_align.isChecked(),
                 "fallback_angle_deg":            self.fallback_angle.value(),
                 "edge_angle_offsets_deg":        self.edge_offsets.text(),
                 "angles_deg":                    self.angles.text(),
-                # Scoring
                 "prefer_shape_usage":            self.prefer_usage.isChecked(),
                 "shape_usage_weight":            self.w_usage.value(),
                 "compactness_weight":            self.w_compact.value(),
                 "center_bias_weight":            self.w_center.value(),
                 "row_shift_weight":              self.w_rowshift.value(),
                 "boundary_margin_penalty_weight": self.w_boundary.value(),
-                # Non-GUI fields forwarded unchanged
                 "plus_busbar_color":             d["plus_busbar_color"],
                 "minus_busbar_color":            d["minus_busbar_color"],
                 "cell_fill_transparency":        d["cell_fill_transparency"],

@@ -66,6 +66,68 @@ def _try_add(parent, child) -> None:
         pass
 
 
+def _spanning_edges(
+    pts: list[App.Vector],
+    pitch_x: float,
+) -> list[tuple[App.Vector, App.Vector]]:
+    """Return MST edges connecting *pts* via hex adjacency.
+
+    Draws strips along actual cell-to-cell connections so within-group
+    busbars never cut across cells of other groups.
+    Falls back to a nearest-neighbour chain when no adjacency is found
+    (degenerate / very small group).
+    """
+    n = len(pts)
+    if n <= 1:
+        return []
+
+    threshold_sq = (pitch_x * 1.05) ** 2
+
+    edges: list[tuple[float, int, int]] = []
+    for i in range(n):
+        for j in range(i + 1, n):
+            dx = pts[i].x - pts[j].x
+            dy = pts[i].y - pts[j].y
+            d_sq = dx * dx + dy * dy
+            if d_sq <= threshold_sq:
+                edges.append((d_sq, i, j))
+
+    if not edges:
+        # No hex-adjacent pairs: nearest-neighbour fallback
+        remaining = list(range(n))
+        chain = [remaining.pop(0)]
+        while remaining:
+            last = chain[-1]
+            nearest = min(
+                remaining,
+                key=lambda j: (pts[last].x - pts[j].x) ** 2 + (pts[last].y - pts[j].y) ** 2,
+            )
+            chain.append(nearest)
+            remaining.remove(nearest)
+        return [(pts[chain[k]], pts[chain[k + 1]]) for k in range(len(chain) - 1)]
+
+    # Kruskal's MST
+    edges.sort()
+    parent = list(range(n))
+
+    def _find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    result = []
+    for _, i, j in edges:
+        pi, pj = _find(i), _find(j)
+        if pi != pj:
+            parent[pi] = pj
+            result.append((pts[i], pts[j]))
+        if len(result) == n - 1:
+            break
+
+    return result
+
+
 def _busbar_segment(
     doc,
     p1: App.Vector,
@@ -165,36 +227,24 @@ def draw_parallel_busbars(
     _try_add(parent_group, grp_top)
     _try_add(parent_group, grp_bottom)
 
+    pitch_x = cfg.get("cell_diameter", 18.4) + cfg.get("clearance", 0.8)
+
     for s, row in selected_by_series.items():
         if len(row) < 2:
             continue
 
-        # Odd groups: + terminal at top face, − at bottom face.
-        # Even groups: reversed.
-        if s % 2 == 1:
-            top_pol, bottom_pol = "plus",  "minus"
-        else:
-            top_pol, bottom_pol = "minus", "plus"
+        top_pts = [_cell_center(terminal_lookup, c["series"], c["parallel"],
+                                sketch_normal, top_z) for c in row]
+        bot_pts = [_cell_center(terminal_lookup, c["series"], c["parallel"],
+                                sketch_normal, bottom_z) for c in row]
 
-        top_pts = sorted(
-            [_cell_center(terminal_lookup, c["series"], c["parallel"],
-                          sketch_normal, top_z) for c in row],
-            key=lambda p: p.x,
-        )
-        bot_pts = sorted(
-            [_cell_center(terminal_lookup, c["series"], c["parallel"],
-                          sketch_normal, bottom_z) for c in row],
-            key=lambda p: p.x,
-        )
-
-        # One long strip spanning the full row — optimise for length.
-        if len(top_pts) >= 2:
-            _busbar_segment(doc, top_pts[0], top_pts[-1],
-                            f"BB_S{s:02d}", grp_top,
+        # Draw one strip per adjacent cell pair (MST) so the busbar follows
+        # the actual cluster shape and never crosses cells of other groups.
+        for idx, (p1, p2) in enumerate(_spanning_edges(top_pts, pitch_x), start=1):
+            _busbar_segment(doc, p1, p2, f"BB_S{s:02d}_{idx:02d}", grp_top,
                             cfg, color_top, sketch_normal)
-        if len(bot_pts) >= 2:
-            _busbar_segment(doc, bot_pts[0], bot_pts[-1],
-                            f"BB_S{s:02d}", grp_bottom,
+        for idx, (p1, p2) in enumerate(_spanning_edges(bot_pts, pitch_x), start=1):
+            _busbar_segment(doc, p1, p2, f"BB_S{s:02d}_{idx:02d}", grp_bottom,
                             cfg, color_bottom, sketch_normal)
 
 

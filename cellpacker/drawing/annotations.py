@@ -12,17 +12,27 @@ from cellpacker.geometry.transforms import rotate_2d, to_global
 from cellpacker.drawing.primitives import draw_text, draw_circle_outline, draw_polyline
 
 
+def _offset(pt: App.Vector, normal: App.Vector | None, z: float) -> App.Vector:
+    if not normal or z == 0.0:
+        return pt
+    return App.Vector(pt.x + normal.x * z,
+                      pt.y + normal.y * z,
+                      pt.z + normal.z * z)
+
+
 def draw_polarity_markers(
     doc,
     terminal_lookup: dict,
     group,
     cfg: dict,
+    sketch_normal: App.Vector | None = None,
 ) -> None:
     """Draw + / − text labels and optional terminal dots for every cell."""
+    label_z = cfg.get("layer_z_labels", 0.0)
     for (s, p), info in terminal_lookup.items():
-        name = f"S{s:02d}_P{p:02d}"
-        plus_pt  = info["plus"]
-        minus_pt = info["minus"]
+        name     = f"S{s:02d}_P{p:02d}"
+        plus_pt  = _offset(info["plus"],  sketch_normal, label_z)
+        minus_pt = _offset(info["minus"], sketch_normal, label_z)
 
         if cfg["draw_polarity_markers"]:
             draw_text(doc, plus_pt,  "(+)", name + "_PLUS",  group, color=(0.8, 0.0, 0.0))
@@ -53,26 +63,18 @@ def draw_pack_terminals(
     sorted_s  = sorted(selected_by_series.keys())
     s_first   = sorted_s[0]
     s_last    = sorted_s[-1]
-    plus_off  = cfg.get("plus_busbar_z",  cfg.get("cell_height", 70.0))
-    minus_off = cfg.get("minus_busbar_z", 0.0)
+    label_z   = cfg.get("layer_z_labels", 0.0)
     dot_r     = cfg.get("terminal_dot_radius", 1.5) * 3.0  # larger circle
 
-    def _offset(pt: App.Vector, dist: float) -> App.Vector:
-        return App.Vector(
-            pt.x + sketch_normal.x * dist,
-            pt.y + sketch_normal.y * dist,
-            pt.z + sketch_normal.z * dist,
-        )
-
-    def _rail_centroid(cells, polarity: str, offset: float) -> App.Vector:
+    def _rail_centroid(cells, polarity: str) -> App.Vector:
         pts = [terminal_lookup[(c["series"], c["parallel"])][polarity] for c in cells]
         cx = sum(p.x for p in pts) / len(pts)
         cy = sum(p.y for p in pts) / len(pts)
         cz = sum(p.z for p in pts) / len(pts)
-        return _offset(App.Vector(cx, cy, cz), offset)
+        return _offset(App.Vector(cx, cy, cz), sketch_normal, label_z)
 
-    neg_pt = _rail_centroid(selected_by_series[s_first], "minus", minus_off)
-    pos_pt = _rail_centroid(selected_by_series[s_last],  "plus",  plus_off)
+    neg_pt = _rail_centroid(selected_by_series[s_first], "minus")
+    pos_pt = _rail_centroid(selected_by_series[s_last],  "plus")
 
     draw_text(doc, neg_pt, "PACK-", "PackTerminal_NEG", group, color=(0.0, 0.0, 1.0))
     draw_text(doc, pos_pt, "PACK+", "PackTerminal_POS", group, color=(1.0, 0.0, 0.0))

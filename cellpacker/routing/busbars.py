@@ -111,8 +111,8 @@ def draw_parallel_busbars(
       ``<root>_Busbars_Plus``  offset *plus_busbar_z* mm along the sketch normal
       ``<root>_Busbars_Minus`` offset *minus_busbar_z* mm along the sketch normal
     """
-    plus_off  = cfg.get("plus_busbar_z",  cfg.get("cell_height", 70.0))
-    minus_off = cfg.get("minus_busbar_z", 0.0)
+    plus_off  = cfg.get("layer_z_plus",  0.0)
+    minus_off = cfg.get("layer_z_minus", 0.0)
 
     plus_color  = cfg.get("plus_busbar_color",  (0.85, 0.10, 0.10))
     minus_color = cfg.get("minus_busbar_color", (0.10, 0.10, 0.85))
@@ -169,8 +169,8 @@ def draw_series_jumpers(
     *plus_busbar_z* mm along the sketch normal) to the − terminal face of
     group S+1 (offset *minus_busbar_z* mm).
     """
-    plus_off  = cfg.get("plus_busbar_z",  cfg.get("cell_height", 70.0))
-    minus_off = cfg.get("minus_busbar_z", 0.0)
+    plus_off  = cfg.get("layer_z_plus",  0.0)
+    minus_off = cfg.get("layer_z_minus", 0.0)
 
     grp = make_or_get_group(doc, root_name + "_Busbars_Series")
     _try_add(parent_group, grp)

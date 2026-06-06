@@ -145,7 +145,7 @@ def run() -> None:
             doc, sketch_obj, selected_by_series,
             params.radius, rotation, series_groups, cfg)
 
-        draw_polarity_markers(doc, terminal_lookup, groups["polarity"], cfg)
+        draw_polarity_markers(doc, terminal_lookup, groups["polarity"], cfg, sketch_normal)
 
         if cfg.get("draw_pack_terminal_labels", True):
             draw_pack_terminals(doc, selected_by_series, terminal_lookup,

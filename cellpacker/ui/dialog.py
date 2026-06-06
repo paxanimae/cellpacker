@@ -46,10 +46,8 @@ def get_user_settings(
             tabs.addTab(self._make_score_tab(),   "Scoring")
 
             # All tabs are built — wire up cross-tab mode cascade.
-            self._auto_z_signal_connected = False
             self.make_2d.toggled.connect(self._on_output_mode)
             self._on_output_mode()          # apply initial state
-            self._on_auto_z(self.auto_z.isChecked())
 
             btns = Qt.QDialogButtonBox(
                 Qt.QDialogButtonBox.Ok | Qt.QDialogButtonBox.Cancel
@@ -330,39 +328,42 @@ the dialog. Adjust and preview as many times as you like, then click
             self._row(f, "  Arrow length (mm)", self.arrow_length,
                 "Length of the alignment direction arrow in mm.")
 
-            # ── Z-layering (3D only) ──────────────────────────────────────
+            # ── Auto-Z (2D mode only) ─────────────────────────────────────
             f.addRow(Qt.QLabel(""))
-            self._z_head = self._head("Z-layering  (3D mode only)")
-            f.addRow(self._z_head)
 
-            self.auto_z = self._check(d.get("auto_z", True))
-            self._row(f, "Auto-Z (physical layer heights)", self.auto_z,
-                "Automatically place each layer at its physical height above the\n"
-                "sketch plane:\n"
-                "  − terminal busbars  →  Z = 0  (cell base)\n"
-                "  + terminal busbars  →  Z = cell height  (cell top face)\n"
-                "  Series jumpers connect between these two heights.\n\n"
-                "Turn OFF to set custom Z values per layer.")
+            self.auto_z_grp = Qt.QGroupBox("Auto-Z layer separation  (2D mode only)")
+            self.auto_z_grp.setCheckable(True)
+            self.auto_z_grp.setChecked(d.get("auto_z", True))
+            self.auto_z_grp.setToolTip(
+                "In 2D mode all objects are flat, so they stack on top of each other\n"
+                "in the viewport. Auto-Z pushes each layer a few mm along the sketch\n"
+                "normal so you can see them separately — like CSS z-index but in 3D space.\n\n"
+                "The values below are small offsets (mm) along the sketch normal axis\n"
+                "(perpendicular to the sketch plane). They do NOT represent physical height.\n\n"
+                "Uncheck to draw everything on the sketch plane (all at offset = 0).")
+            az = Qt.QFormLayout(self.auto_z_grp)
 
-            note = Qt.QLabel(
-                "Auto-Z ON → Z fields below are read-only and track cell height.\n"
-                "Auto-Z OFF → enter custom Z per layer."
-            )
-            note.setWordWrap(True)
-            f.addRow(note)
-            self._z_note = note
+            self.layer_z_minus = self._dspin(d.get("layer_z_minus", 0.0), -100.0, 100.0, 1)
+            self._row(az, "− busbar layer offset (mm)", self.layer_z_minus,
+                "Offset of the negative-terminal busbar layer along the sketch normal.\n"
+                "Typically 0 — the bottom-most layer, sitting on the sketch plane.")
 
-            self.minus_busbar_z = self._dspin(d["minus_busbar_z"], -500.0, 500.0)
-            self._row(f, "  − terminal layer Z (mm)", self.minus_busbar_z,
-                "Height of the negative-terminal busbar layer along the sketch normal.\n"
-                "Physical value: 0 mm (cell base). Editable when Auto-Z is OFF.")
+            self.layer_z_cells = self._dspin(d.get("layer_z_cells", 1.0), -100.0, 100.0, 1)
+            self._row(az, "Cell layer offset (mm)", self.layer_z_cells,
+                "Offset of the cell circles layer along the sketch normal.\n"
+                "Should be between the minus and plus busbar layers.")
 
-            self.plus_busbar_z = self._dspin(d["plus_busbar_z"], -500.0, 500.0)
-            self._row(f, "  + terminal layer Z (mm)", self.plus_busbar_z,
-                "Height of the positive-terminal busbar layer along the sketch normal.\n"
-                "Tracks cell height automatically when Auto-Z is ON.")
+            self.layer_z_plus = self._dspin(d.get("layer_z_plus", 2.0), -100.0, 100.0, 1)
+            self._row(az, "+ busbar layer offset (mm)", self.layer_z_plus,
+                "Offset of the positive-terminal busbar layer along the sketch normal.\n"
+                "Typically the highest layer.")
 
-            self.auto_z.stateChanged.connect(self._on_auto_z)
+            self.layer_z_labels = self._dspin(d.get("layer_z_labels", 3.0), -100.0, 100.0, 1)
+            self._row(az, "Labels layer offset (mm)", self.layer_z_labels,
+                "Offset of polarity markers, S/P labels, and PACK+/- annotations.\n"
+                "Typically the top-most layer so labels are always visible.")
+
+            f.addRow(self.auto_z_grp)
 
             scroll.setWidget(inner)
             outer = Qt.QVBoxLayout(w)
@@ -370,38 +371,15 @@ the dialog. Adjust and preview as many times as you like, then click
             return w
 
         def _on_output_mode(self):
-            """Cascade 2D/3D mode to all sections that only apply in one mode."""
+            """Cascade 2D/3D mode — enable/disable all mode-specific widgets."""
             is_3d = self.make_3d.isChecked()
-            # Z-layering section — only meaningful in 3D
-            for w in (self._z_head, self._z_note,
-                      self.auto_z, self.minus_busbar_z, self.plus_busbar_z):
-                w.setEnabled(is_3d)
-            if not is_3d:
-                # Ensure Auto-Z signal is disconnected so it doesn't fire
-                if self._auto_z_signal_connected:
-                    self.cell_height.valueChanged.disconnect(self.plus_busbar_z.setValue)
-                    self._auto_z_signal_connected = False
-            else:
-                # Re-apply Auto-Z state when switching back to 3D
-                self._on_auto_z(self.auto_z.isChecked())
-            # Routing: solid strips and thickness don't exist in 2D
+            # Cell height only meaningful in 3D (cylinder height)
+            self.cell_height.setEnabled(is_3d)
+            # Auto-Z is a 2D-only concept
+            self.auto_z_grp.setEnabled(not is_3d)
+            # Routing: solid strips and thickness only exist in 3D
             self.busbar_solids.setEnabled(is_3d)
             self.busbar_thickness.setEnabled(is_3d)
-
-        def _on_auto_z(self, state):
-            on = bool(state)
-            self.plus_busbar_z.setEnabled(not on)
-            self.minus_busbar_z.setEnabled(not on)
-            if on and not self._auto_z_signal_connected:
-                self.cell_height.valueChanged.connect(self.plus_busbar_z.setValue)
-                self._auto_z_signal_connected = True
-                self.plus_busbar_z.setValue(self.cell_height.value())
-                self.minus_busbar_z.setValue(0.0)
-            elif not on and self._auto_z_signal_connected:
-                self.cell_height.valueChanged.disconnect(self.plus_busbar_z.setValue)
-                self._auto_z_signal_connected = False
-                self.plus_busbar_z.setValue(0.0)
-                self.minus_busbar_z.setValue(0.0)
 
         # ── Tab: Routing ──────────────────────────────────────────────────
 
@@ -554,8 +532,9 @@ the dialog. Adjust and preview as many times as you like, then click
         # ── Result extraction ─────────────────────────────────────────────
 
         def values(self) -> dict:
-            d = self._defs
+            d    = self._defs
             is_3d = self.make_3d.isChecked()
+            auto_z = (not is_3d) and self.auto_z_grp.isChecked()
             return {
                 "cell_diameter":                 self.cell_diameter.value(),
                 "clearance":                     self.clearance.value(),
@@ -564,8 +543,8 @@ the dialog. Adjust and preview as many times as you like, then click
                 "target_p":                      self.target_p.value(),
                 "colorize_series":               self.colorize_series.isChecked(),
                 "snake_series_order":            self.snake.isChecked(),
-                "make_2d":                       self.make_2d.isChecked(),
-                "make_3d":                       self.make_3d.isChecked(),
+                "make_2d":                       not is_3d,
+                "make_3d":                       is_3d,
                 "make_labels":                   self.make_labels.isChecked(),
                 "show_candidates":               self.show_candidates.isChecked(),
                 "candidates_visible":            self.candidates_visible.isChecked(),
@@ -576,25 +555,33 @@ the dialog. Adjust and preview as many times as you like, then click
                 "draw_pack_terminal_labels":     self.draw_pack_labels.isChecked(),
                 "draw_alignment_arrow":          self.draw_arrow.isChecked(),
                 "alignment_arrow_length":        self.arrow_length.value(),
-                "auto_z":                        is_3d and self.auto_z.isChecked(),
-                "plus_busbar_z":                 self.plus_busbar_z.value() if is_3d else 0.0,
-                "minus_busbar_z":                self.minus_busbar_z.value() if is_3d else 0.0,
+                # Z-layer offsets: small visual offsets in 2D, physical in 3D
+                "auto_z":        auto_z,
+                "layer_z_minus": self.layer_z_minus.value() if auto_z else (0.0 if not is_3d else 0.0),
+                "layer_z_cells": self.layer_z_cells.value() if auto_z else 0.0,
+                "layer_z_plus":  (self.layer_z_plus.value() if auto_z
+                                  else (self.cell_height.value() if is_3d else 0.0)),
+                "layer_z_labels": self.layer_z_labels.value() if auto_z else 0.0,
+                # Routing
                 "draw_parallel_busbars":         self.grp_par.isChecked(),
                 "draw_busbar_solids":            is_3d and self.busbar_solids.isChecked(),
                 "busbar_width":                  self.busbar_width.value(),
                 "busbar_thickness":              self.busbar_thickness.value() if is_3d else 0.0,
                 "draw_series_jumpers":           self.grp_ser.isChecked(),
                 "series_jumper_style":           self.jumper_style.currentText(),
+                # Alignment
                 "use_selected_edge_alignment":   self.use_edge_align.isChecked(),
                 "fallback_angle_deg":            self.fallback_angle.value(),
                 "edge_angle_offsets_deg":        self.edge_offsets.text(),
                 "angles_deg":                    self.angles.text(),
+                # Scoring
                 "prefer_shape_usage":            self.prefer_usage.isChecked(),
                 "shape_usage_weight":            self.w_usage.value(),
                 "compactness_weight":            self.w_compact.value(),
                 "center_bias_weight":            self.w_center.value(),
                 "row_shift_weight":              self.w_rowshift.value(),
                 "boundary_margin_penalty_weight": self.w_boundary.value(),
+                # Passthrough
                 "plus_busbar_color":             d["plus_busbar_color"],
                 "minus_busbar_color":            d["minus_busbar_color"],
                 "cell_fill_transparency":        d["cell_fill_transparency"],

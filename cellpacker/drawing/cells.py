@@ -96,12 +96,22 @@ def build_series_groups(doc, root_name: str, total_s: int, parent_group) -> dict
 
 # ── Cell drawing ──────────────────────────────────────────────────────────
 
+def _layer_pt(pt: App.Vector, normal: App.Vector, z: float) -> App.Vector:
+    """Offset *pt* by *z* mm along *normal* (the sketch-plane perpendicular)."""
+    if z == 0.0:
+        return pt
+    return App.Vector(pt.x + normal.x * z,
+                      pt.y + normal.y * z,
+                      pt.z + normal.z * z)
+
+
 def draw_candidate_cells(
     doc, sketch_obj, points, radius, rotation, group, cfg
 ) -> None:
-    normal = get_sketch_normal(sketch_obj)
+    normal  = get_sketch_normal(sketch_obj)
+    cell_z  = cfg.get("layer_z_cells", 0.0)
     for i, pt in enumerate(points, start=1):
-        gpt = to_global(sketch_obj, pt[0], pt[1])
+        gpt = _layer_pt(to_global(sketch_obj, pt[0], pt[1]), normal, cell_z)
         if cfg["make_2d"]:
             draw_circle(doc, gpt, radius, f"CAND_{i:03d}", group,
                         color=(0.70, 0.70, 0.70), normal=normal)
@@ -111,9 +121,9 @@ def draw_candidate_cells(
 
 
 def draw_selected_cell(
-    doc, sketch_obj, cell, radius, rotation, group, cfg, color, normal
+    doc, sketch_obj, cell, radius, rotation, group, cfg, color, normal, cell_z
 ) -> App.Vector:
-    gpt = to_global(sketch_obj, cell["x"], cell["y"])
+    gpt  = _layer_pt(to_global(sketch_obj, cell["x"], cell["y"]), normal, cell_z)
     name = f"S{cell['series']:02d}_P{cell['parallel']:02d}"
 
     if cfg["make_2d"]:
@@ -131,7 +141,8 @@ def draw_all_selected_cells(
     doc, sketch_obj, selected_by_series, radius, rotation, series_groups, cfg
 ) -> dict[tuple[int, int], dict]:
     total_s = max(selected_by_series.keys()) if selected_by_series else 1
-    normal = get_sketch_normal(sketch_obj)
+    normal  = get_sketch_normal(sketch_obj)
+    cell_z  = cfg.get("layer_z_cells", 0.0)
     terminal_lookup: dict[tuple[int, int], dict] = {}
 
     for s, row in selected_by_series.items():
@@ -141,7 +152,7 @@ def draw_all_selected_cells(
         for cell in row:
             draw_selected_cell(
                 doc, sketch_obj, cell, radius, rotation,
-                series_groups[s], cfg, color, normal,
+                series_groups[s], cfg, color, normal, cell_z,
             )
             plus_pt, minus_pt = _polarity_points(sketch_obj, cell, cfg["polarity_offset"])
             terminal_lookup[(cell["series"], cell["parallel"])] = {

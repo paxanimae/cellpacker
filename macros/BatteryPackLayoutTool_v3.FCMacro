@@ -32,7 +32,7 @@ for _mod in [k for k in sys.modules if k == "cellpacker" or k.startswith("cellpa
 import FreeCAD as App
 import FreeCADGui as Gui
 
-from cellpacker.defaults import DEFAULTS
+from cellpacker.defaults import load_defaults
 from cellpacker.utils import parse_float_list, ensure_active_doc
 from cellpacker.ui.dialog import get_user_settings
 from cellpacker.ui.selection import get_selected_sketch_and_edge
@@ -174,7 +174,7 @@ def run() -> None:
             _delete_tree(doc, _last_root[0])
             doc.recompute()
 
-    cfg = get_user_settings(DEFAULTS, preview_fn=_draw, cleanup_fn=_cleanup)
+    cfg = get_user_settings(load_defaults(), preview_fn=_draw, cleanup_fn=_cleanup)
     if cfg is None:
         _cleanup()
         print("BatteryPackLayoutTool: cancelled.")

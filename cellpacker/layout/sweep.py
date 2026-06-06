@@ -1,62 +1,35 @@
 """
 cellpacker.layout.sweep
 ~~~~~~~~~~~~~~~~~~~~~~~
-Sweep over a list of candidate angles, generate hex grids for each,
-run S×P selection, and return the best result.
+Sweep over candidate angles and return the angle that produces the most
+candidate cell positions.  Group selection is done separately by
+cellpacker.layout.graph.find_series_path.
 """
 
 from __future__ import annotations
 
 from cellpacker.geometry.grid import GridParams, generate_candidate_points
-from cellpacker.layout.selector import select_compact_sp
 
 
-def _is_better(candidate: dict, best: dict, mode: str) -> bool:
-    """Return ``True`` if *candidate* beats *best* under *mode*."""
-    if mode == "fit":
-        return len(candidate["points"]) > len(best["points"])
-    # pack mode: maximise selected count, break ties by total candidates
-    if candidate["selected_count"] > best["selected_count"]:
-        return True
-    if candidate["selected_count"] == best["selected_count"]:
-        return len(candidate["points"]) > len(best["points"])
-    return False
-
-
-def sweep_angles(
+def sweep_for_candidates(
     face,
     bbox,
     angle_list: list[float],
     params: GridParams,
-    cfg: dict,
-) -> dict:
-    """
-    Try every angle in *angle_list* and return a result dict for the best one.
+) -> tuple[float, list[tuple[float, float]]]:
+    """Try every angle; return (best_angle, candidate_points).
 
-    Result dict keys
-    ----------------
-    angle, points, rows, valid_rows, selected, selected_count
+    "Best" means the angle that yields the most candidate positions inside
+    the face.  The caller is responsible for running group selection on the
+    returned points.
     """
-    best: dict | None = None
+    best_angle = angle_list[0] if angle_list else 0.0
+    best_pts: list[tuple[float, float]] = []
 
     for angle in angle_list:
-        points = generate_candidate_points(face, bbox, angle, params)
-        selected, rows, vrows = select_compact_sp(
-            face, points, params.pitch_y, cfg["target_s"], cfg["target_p"], cfg,
-            angle_deg=angle,
-        )
-        result = {
-            "angle": angle,
-            "points": points,
-            "rows": rows,
-            "valid_rows": vrows,
-            "selected": selected,
-            "selected_count": 0 if selected is None else len(selected),
-        }
-        if best is None or _is_better(result, best, cfg.get("mode", "pack")):
-            best = result
+        pts = generate_candidate_points(face, bbox, angle, params)
+        if len(pts) > len(best_pts):
+            best_pts = pts
+            best_angle = angle
 
-    if best is None:
-        raise RuntimeError("No angle produced any candidate points.")
-
-    return best
+    return best_angle, best_pts

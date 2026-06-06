@@ -91,13 +91,14 @@ DEFAULTS: dict = {
     "draw_alignment_arrow": True,
     "alignment_arrow_length": 60.0,
 
-    # ── Scoring weights ───────────────────────────────────────────────────
-    "prefer_shape_usage": True,
-    "shape_usage_weight": 2.5,
-    "compactness_weight": 1.0,
-    "center_bias_weight": 1.0,
-    "row_shift_weight": 2.5,
-    "boundary_margin_penalty_weight": 0.25,
+    # ── Group / terminal placement ────────────────────────────────────────
+    # Target compass positions for PACK− and PACK+ terminals.
+    # Valid values: "bottom-left", "bottom", "bottom-right", "right",
+    #               "top-right", "top", "top-left", "left"
+    "pack_minus_target": "bottom-left",
+    "pack_plus_target":  "top-right",
+    # Allow the series chain to jump across gaps when no adjacent path exists.
+    "allow_jumps": False,
 
     # ── Visual style ──────────────────────────────────────────────────────
     "busbar_color_top":    (0.90, 0.55, 0.10),  # warm orange — top-face strips

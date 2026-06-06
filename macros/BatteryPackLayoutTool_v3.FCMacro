@@ -39,8 +39,8 @@ from cellpacker.ui.selection import get_selected_sketch_and_edge
 from cellpacker.geometry.face import get_local_face
 from cellpacker.geometry.grid import grid_params_from_config, generate_candidates_from_edge
 from cellpacker.geometry.transforms import get_edge_angle_in_local_coords, get_edge_local_endpoints
-from cellpacker.layout.sweep import sweep_angles
-from cellpacker.layout.selector import select_compact_sp
+from cellpacker.layout.sweep import sweep_for_candidates
+from cellpacker.layout.graph import find_series_path, FAILURE_MESSAGES
 from cellpacker.geometry.layers import build_layers
 from cellpacker.layout.selector import build_selected_by_series
 from cellpacker.drawing.cells import (
@@ -83,43 +83,56 @@ def run() -> None:
         cfg = {**cfg, **build_layers(cfg)}
         params = grid_params_from_config(cfg)
 
-        # Candidate generation: edge-anchored when an edge is selected,
-        # otherwise sweep over configured angles.
+        # ── Candidate generation ────────────────────────────────────────
         if cfg["use_selected_edge_alignment"] and alignment_edge is not None:
             p1_local, p2_local = get_edge_local_endpoints(sketch_obj, alignment_edge)
-            edge_angle = get_edge_angle_in_local_coords(
+            grid_angle = get_edge_angle_in_local_coords(
                 sketch_obj, alignment_edge,
                 fallback_angle_deg=cfg["fallback_angle_deg"],
             )
-            print(f"BatteryPackLayoutTool: edge angle = {edge_angle:.2f}° — using edge-anchored grid")
+            print(f"BatteryPackLayoutTool: edge angle = {grid_angle:.2f}° — edge-anchored grid")
             points = generate_candidates_from_edge(face, p1_local, p2_local, params)
-            selected, rows, vrows = select_compact_sp(
-                face, points, params.pitch_y,
-                cfg["target_s"], cfg["target_p"], cfg,
-                angle_deg=edge_angle,
-            )
-            best = {
-                "angle":          edge_angle,
-                "points":         points,
-                "rows":           rows,
-                "valid_rows":     vrows,
-                "selected":       selected,
-                "selected_count": 0 if selected is None else len(selected),
-            }
         else:
             angle_list = parse_float_list(cfg["angles_deg"], [0, 5, 10, 15, 20, 25, 30])
-            best = sweep_angles(face, bbox, angle_list, params, cfg)
+            grid_angle, points = sweep_for_candidates(face, bbox, angle_list, params)
+            print(f"BatteryPackLayoutTool: sweep best angle = {grid_angle:.2f}°")
+
+        # ── Group / terminal placement (graph search) ───────────────────
+        result = find_series_path(
+            points, params.pitch_x,
+            cfg["target_s"], cfg["target_p"],
+            cfg.get("pack_minus_target", "bottom-left"),
+            cfg.get("pack_plus_target",  "top-right"),
+            cfg.get("allow_jumps", False),
+            bbox,
+        )
 
         print("─" * 50)
-        print(f"Best angle       : {best['angle']:.2f}°")
-        print(f"Candidate cells  : {len(best['points'])}")
-        print(f"Selected         : {best['selected_count']} / "
+        print(f"Grid angle       : {grid_angle:.2f}°")
+        print(f"Candidate cells  : {len(points)}")
+        print(f"Selected         : {result['selected_count']} / "
               f"{cfg['target_s'] * cfg['target_p']}")
-        if best["selected_count"] < cfg["target_s"] * cfg["target_p"]:
-            print(f"WARNING: cannot fit a full "
-                  f"{cfg['target_s']}s{cfg['target_p']}p pack.")
+        if result["failure"]:
+            print(f"WARNING: {FAILURE_MESSAGES.get(result['failure'], result['failure'])}")
+        else:
+            achieved_minus = result["minus_achieved"]
+            achieved_plus  = result["plus_achieved"]
+            target_minus   = cfg.get("pack_minus_target", "bottom-left")
+            target_plus    = cfg.get("pack_plus_target",  "top-right")
+            minus_ok = "✓" if achieved_minus == target_minus else f"→ achieved: {achieved_minus}"
+            plus_ok  = "✓" if achieved_plus  == target_plus  else f"→ achieved: {achieved_plus}"
+            print(f"PACK−  target: {target_minus:12s}  {minus_ok}")
+            print(f"PACK+  target: {target_plus:12s}  {plus_ok}")
+            if result["jumps"]:
+                print(f"Jumps at series steps: {result['jumps']}")
         print("─" * 50)
 
+        best = {
+            "angle":          grid_angle,
+            "points":         points,
+            "selected":       result["selected"],
+            "selected_count": result["selected_count"],
+        }
         # ── Always run pack layout ───────────────────────────────────────
         new_root = f"BatteryPack_{cfg['target_s']}s{cfg['target_p']}p"
 

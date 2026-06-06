@@ -42,8 +42,8 @@ def get_user_settings(
             tabs.addTab(self._make_pack_tab(),    "Pack")
             tabs.addTab(self._make_display_tab(), "Display")
             tabs.addTab(self._make_routing_tab(), "Routing")
+            tabs.addTab(self._make_groups_tab(),  "Groups")
             tabs.addTab(self._make_align_tab(),   "Alignment")
-            tabs.addTab(self._make_score_tab(),   "Scoring")
 
             # All tabs are built — wire up cross-tab cascades.
             self.make_2d.toggled.connect(self._on_output_mode)
@@ -788,52 +788,93 @@ the dialog. Adjust and preview as many times as you like, then click
 
             return w
 
-        # ── Tab: Scoring ──────────────────────────────────────────────────
+        # ── Tab: Groups ───────────────────────────────────────────────────
 
-        def _make_score_tab(self):
+        @staticmethod
+        def _make_compass(title: str, default: str):
+            """Return a QGroupBox with 8 radio buttons in a compass layout.
+
+            The returned widget has a ``_buttons`` dict (name→QRadioButton)
+            and a ``value()`` method that returns the checked corner name.
+            """
+            POSITIONS = [
+                (0, 0, "top-left",     "↖"),
+                (0, 1, "top",          "↑"),
+                (0, 2, "top-right",    "↗"),
+                (1, 0, "left",         "←"),
+                (1, 2, "right",        "→"),
+                (2, 0, "bottom-left",  "↙"),
+                (2, 1, "bottom",       "↓"),
+                (2, 2, "bottom-right", "↘"),
+            ]
+            grp = Qt.QGroupBox(title)
+            grid = Qt.QGridLayout(grp)
+            grid.setSpacing(2)
+
+            center = Qt.QLabel("·")
+            center.setAlignment(Qt.Qt.AlignCenter)
+            grid.addWidget(center, 1, 1)
+
+            btn_group = Qt.QButtonGroup(grp)
+            grp._buttons = {}
+            for row, col, name, symbol in POSITIONS:
+                btn = Qt.QRadioButton(symbol)
+                btn.setToolTip(name)
+                btn_group.addButton(btn)
+                grid.addWidget(btn, row, col)
+                grp._buttons[name] = btn
+                if name == default:
+                    btn.setChecked(True)
+
+            if not any(b.isChecked() for b in grp._buttons.values()):
+                list(grp._buttons.values())[0].setChecked(True)
+
+            def _value():
+                for name, btn in grp._buttons.items():
+                    if btn.isChecked():
+                        return name
+                return default
+
+            grp.value = _value
+            return grp
+
+        def _make_groups_tab(self):
             w = Qt.QWidget()
-            f = Qt.QFormLayout(w)
+            lay = Qt.QVBoxLayout(w)
             d = self._defs
 
-            f.addRow(Qt.QLabel(
-                "Scoring weights control how the algorithm chooses between\n"
-                "candidate layouts when several equally-sized windows exist.\n"
-                "Higher weight = that criterion matters more."
+            lay.addWidget(Qt.QLabel(
+                "Choose where PACK− and PACK+ terminals should end up.\n"
+                "The algorithm finds the series group arrangement that best\n"
+                "matches your targets, in priority order: PACK− first, then PACK+,\n"
+                "then compactness."
             ))
-            f.addRow(Qt.QLabel(""))
 
-            self.prefer_usage = self._check(d["prefer_shape_usage"])
-            self._row(f, "Prefer shape usage", self.prefer_usage,
-                "When ON, the scorer strongly rewards layouts that fill more\n"
-                "of the outline area, even if the pack is less compact.\n"
-                "Turn OFF to let the other weights decide.")
+            compass_row = Qt.QHBoxLayout()
+            self.minus_compass = self._make_compass(
+                "PACK−  target position",
+                d.get("pack_minus_target", "bottom-left"),
+            )
+            self.plus_compass = self._make_compass(
+                "PACK+  target position",
+                d.get("pack_plus_target", "top-right"),
+            )
+            compass_row.addWidget(self.minus_compass)
+            compass_row.addSpacing(20)
+            compass_row.addWidget(self.plus_compass)
+            compass_row.addStretch()
+            lay.addLayout(compass_row)
 
-            self.w_usage = self._dspin(d["shape_usage_weight"], 0.0, 50.0)
-            self._row(f, "Shape usage weight", self.w_usage,
-                "How much to reward using a larger fraction of the outline area.\n"
-                "Increase to pack cells closer to the boundary.")
+            adv = Qt.QGroupBox("Advanced")
+            adv_lay = Qt.QFormLayout(adv)
+            self.allow_jumps = self._check(d.get("allow_jumps", False))
+            self._row(adv_lay, "Allow jumps", self.allow_jumps,
+                "When no adjacent path exists between series groups, allow\n"
+                "the chain to jump to a non-adjacent cluster as a last resort.\n"
+                "Jumps are flagged in the report view after each run.")
+            lay.addWidget(adv)
 
-            self.w_compact = self._dspin(d["compactness_weight"], 0.0, 50.0)
-            self._row(f, "Compactness weight", self.w_compact,
-                "How much to reward packs where selected cells are clustered\n"
-                "together with minimal internal gaps.")
-
-            self.w_center = self._dspin(d["center_bias_weight"], 0.0, 50.0)
-            self._row(f, "Center bias weight", self.w_center,
-                "How much to reward packs whose centre of mass is close to\n"
-                "the centre of the outline. Useful for symmetric shapes.")
-
-            self.w_rowshift = self._dspin(d["row_shift_weight"], 0.0, 50.0)
-            self._row(f, "Row shift weight", self.w_rowshift,
-                "Penalty for large X-offset differences between adjacent series\n"
-                "rows. Higher values encourage straighter, more rectangular packs\n"
-                "where series jumper wires are all roughly the same length.")
-
-            self.w_boundary = self._dspin(d["boundary_margin_penalty_weight"], 0.0, 50.0)
-            self._row(f, "Boundary margin penalty weight", self.w_boundary,
-                "Penalty for cells that sit very close to the outline boundary.\n"
-                "Increase to keep cells away from the edge (e.g. for wall clearance).")
-
+            lay.addStretch()
             return w
 
         # ── Result extraction ─────────────────────────────────────────────
@@ -884,13 +925,10 @@ the dialog. Adjust and preview as many times as you like, then click
                 "fallback_angle_deg":            self.fallback_angle.value(),
                 "edge_angle_offsets_deg":        self.edge_offsets.text(),
                 "angles_deg":                    self.angles.text(),
-                # Scoring
-                "prefer_shape_usage":            self.prefer_usage.isChecked(),
-                "shape_usage_weight":            self.w_usage.value(),
-                "compactness_weight":            self.w_compact.value(),
-                "center_bias_weight":            self.w_center.value(),
-                "row_shift_weight":              self.w_rowshift.value(),
-                "boundary_margin_penalty_weight": self.w_boundary.value(),
+                # Group / terminal placement
+                "pack_minus_target": self.minus_compass.value(),
+                "pack_plus_target":  self.plus_compass.value(),
+                "allow_jumps":       self.allow_jumps.isChecked(),
                 # Passthrough
                 "busbar_color_top":              d["busbar_color_top"],
                 "busbar_color_bottom":           d["busbar_color_bottom"],

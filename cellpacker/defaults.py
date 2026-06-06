@@ -4,7 +4,16 @@ cellpacker.defaults
 Single source of truth for all configuration defaults.
 The GUI is pre-populated from these values, and they are
 used as fallback wherever a key might be missing.
+
+User overrides are stored in defaults.json (same directory).
+If that file is present, load_defaults() merges it over DEFAULTS.
 """
+
+from __future__ import annotations
+import json
+import os
+
+_USER_DEFAULTS_PATH = os.path.join(os.path.dirname(__file__), "defaults.json")
 
 # Standard cylindrical cell presets  {name: (diameter_mm, height_mm)}
 CELL_PRESETS: dict[str, tuple[float, float]] = {
@@ -52,6 +61,7 @@ DEFAULTS: dict = {
     #   even groups → + terminal at bottom face, − terminal at top face
     "auto_z": True,
     "auto_z_step": 1.0,
+    "layer_z_candidates": 0.0,
 
     # ── Grid alignment ────────────────────────────────────────────────────
     "use_selected_edge_alignment": True,
@@ -94,3 +104,19 @@ DEFAULTS: dict = {
     "busbar_color_bottom": (0.15, 0.45, 0.90),  # cool blue  — bottom-face strips
     "cell_fill_transparency": 0,
 }
+
+
+def load_defaults() -> dict:
+    """Return DEFAULTS merged with any user overrides from defaults.json."""
+    merged = dict(DEFAULTS)
+    if os.path.isfile(_USER_DEFAULTS_PATH):
+        with open(_USER_DEFAULTS_PATH, "r", encoding="utf-8") as fh:
+            overrides = json.load(fh)
+        merged.update(overrides)
+    return merged
+
+
+def save_defaults(cfg: dict, path: str = _USER_DEFAULTS_PATH) -> None:
+    """Write *cfg* to *path* as formatted JSON."""
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(cfg, fh, indent=2, ensure_ascii=False)

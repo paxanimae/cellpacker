@@ -42,7 +42,8 @@ def sweep_angles(
     for angle in angle_list:
         points = generate_candidate_points(face, bbox, angle, params)
         selected, rows, vrows = select_compact_sp(
-            face, points, params.pitch_y, cfg["target_s"], cfg["target_p"], cfg
+            face, points, params.pitch_y, cfg["target_s"], cfg["target_p"], cfg,
+            angle_deg=angle,
         )
         result = {
             "angle": angle,
@@ -52,7 +53,7 @@ def sweep_angles(
             "selected": selected,
             "selected_count": 0 if selected is None else len(selected),
         }
-        if best is None or _is_better(result, best, cfg["mode"]):
+        if best is None or _is_better(result, best, cfg.get("mode", "pack")):
             best = result
 
     if best is None:

@@ -1,0 +1,8 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# User-local settings overrides
+cellpacker/defaults.json

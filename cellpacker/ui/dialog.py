@@ -7,7 +7,7 @@ on cancellation.
 
 from __future__ import annotations
 
-from cellpacker.defaults import DEFAULTS, CELL_PRESETS
+from cellpacker.defaults import DEFAULTS, CELL_PRESETS, save_defaults
 
 
 def get_user_settings(
@@ -65,6 +65,13 @@ def get_user_settings(
                     "Adjust settings and click Preview again to update."
                 )
                 prev.clicked.connect(lambda: preview_fn(self.values()))
+
+            save_btn = btns.addButton("Save as Defaults", Qt.QDialogButtonBox.ActionRole)
+            save_btn.setToolTip(
+                "Write current settings to cellpacker/defaults.json.\n"
+                "These values will pre-populate the dialog on every future run."
+            )
+            save_btn.clicked.connect(self._save_as_defaults)
 
             root.addWidget(btns)
 
@@ -889,6 +896,14 @@ the dialog. Adjust and preview as many times as you like, then click
                 "busbar_color_bottom":           d["busbar_color_bottom"],
                 "cell_fill_transparency":        d["cell_fill_transparency"],
             }
+
+        def _save_as_defaults(self):
+            save_defaults(self.values())
+            Qt.QMessageBox.information(
+                self, "Saved",
+                "Current settings saved as defaults.\n"
+                "They will pre-populate this dialog on future runs."
+            )
 
         def reject(self):
             if cleanup_fn is not None:

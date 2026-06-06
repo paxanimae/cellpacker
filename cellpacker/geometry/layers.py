@@ -16,13 +16,14 @@ which series group you are looking at.  It only makes sense to talk
 about a "positive side" or "negative side" at the pack's two free end
 terminals (PACK+ and PACK−).
 
-Four distinct layers (bottom → top):
-  0  layer_z_bottom       bottom-face busbar strips, series jumpers on
+Five distinct layers (bottom → top):
+  0  layer_z_candidates    all candidate cell circles (grey, background)
+  1  layer_z_bottom        bottom-face busbar strips, series jumpers on
                            the bottom face, and bottom-face polarity markers
-  1  layer_z_cells         cell circles / cylinders
-  2  layer_z_top           top-face busbar strips, series jumpers on the
+  2  layer_z_cells         selected cell circles / cylinders
+  3  layer_z_top           top-face busbar strips, series jumpers on the
                            top face, and top-face polarity markers
-  3  layer_z_annotations   S/P text labels, PACK+/PACK− labels, arrow
+  4  layer_z_annotations   S/P text labels, PACK+/PACK− labels, arrow
 
 Which face each object belongs to
   Parallel busbar for group S:
@@ -39,10 +40,11 @@ Which face each object belongs to
 from __future__ import annotations
 
 LAYER_INDICES: dict[str, int] = {
-    "layer_z_bottom":      0,
-    "layer_z_cells":       1,
-    "layer_z_top":         2,
-    "layer_z_annotations": 3,
+    "layer_z_candidates":  0,
+    "layer_z_bottom":      1,
+    "layer_z_cells":       2,
+    "layer_z_top":         3,
+    "layer_z_annotations": 4,
 }
 
 
@@ -56,6 +58,7 @@ def build_layers(cfg: dict) -> dict[str, float]:
     if cfg.get("make_3d"):
         ht = cfg.get("cell_height", 70.0)
         return {
+            "layer_z_candidates":  0.0,
             "layer_z_bottom":      0.0,
             "layer_z_cells":       0.0,
             "layer_z_top":         ht,

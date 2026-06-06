@@ -30,6 +30,74 @@ def grid_params_from_config(cfg: dict) -> GridParams:
     return GridParams(pitch_x=pitch_x, pitch_y=pitch_y, radius=radius)
 
 
+def generate_candidates_from_edge(
+    face,
+    p1_local: tuple[float, float],
+    p2_local: tuple[float, float],
+    params: GridParams,
+) -> list[tuple[float, float]]:
+    """
+    Generate hex-grid candidates anchored to the edge p1→p2.
+
+    Row 0: cell centres at distance *radius* from the edge line, spanning the
+    full interior width of the face.  Subsequent rows grow perpendicular to
+    the edge, inward into the face.  The inward direction is determined
+    automatically from the face bounding-box centroid.
+    """
+    px, py, r = params.pitch_x, params.pitch_y, params.radius
+
+    dx = p2_local[0] - p1_local[0]
+    dy = p2_local[1] - p1_local[1]
+    edge_len = math.sqrt(dx * dx + dy * dy)
+    if edge_len < 1e-6:
+        return []
+
+    # Unit vector along the edge
+    ux = (dx / edge_len, dy / edge_len)
+
+    # Perpendicular: try CCW first; flip to CW if centroid is on the other side
+    uy_ccw = (-ux[1],  ux[0])
+    uy_cw  = ( ux[1], -ux[0])
+    bbox = face.BoundBox
+    cx = (bbox.XMin + bbox.XMax) / 2.0
+    cy = (bbox.YMin + bbox.YMax) / 2.0
+    to_c = (cx - p1_local[0], cy - p1_local[1])
+    uy = uy_ccw if (to_c[0] * uy_ccw[0] + to_c[1] * uy_ccw[1]) >= 0 else uy_cw
+
+    # Sweep range along the edge: cover the full face diagonal so no cell is missed
+    diag = math.sqrt((bbox.XMax - bbox.XMin) ** 2 + (bbox.YMax - bbox.YMin) ** 2)
+
+    points: list[tuple[float, float]] = []
+    row = 0
+    while True:
+        perp = r + row * py
+        ox = p1_local[0] + uy[0] * perp
+        oy = p1_local[1] + uy[1] * perp
+
+        # Odd rows stagger by half-pitch along the edge (hex close-packing)
+        t0 = -(diag + px) + (px / 2.0 if row % 2 == 1 else 0.0)
+        t1 =   diag + px
+
+        row_pts: list[tuple[float, float]] = []
+        t = t0
+        while t <= t1:
+            x = ox + ux[0] * t
+            y = oy + ux[1] * t
+            if circle_fits(face, x, y, r):
+                row_pts.append((x, y))
+            t += px
+
+        if not row_pts and row > 0:
+            break
+
+        points.extend(row_pts)
+        row += 1
+        if row > 500:
+            break
+
+    return points
+
+
 def generate_candidate_points(
     face,
     bbox,

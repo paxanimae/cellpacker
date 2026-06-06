@@ -65,11 +65,10 @@ def build_pack_groups(doc, root_name: str) -> dict[str, object]:
     grp_pol  = make_or_get_group(doc, root_name + "_Polarity")
     grp_dir  = make_or_get_group(doc, root_name + "_Direction")
 
-    # Pre-create busbar sub-groups so they appear in the tree in a fixed order.
-    grp_bus_plus   = make_or_get_group(doc, root_name + "_Busbars_Plus")
-    grp_bus_minus  = make_or_get_group(doc, root_name + "_Busbars_Minus")
-    grp_bus_series = make_or_get_group(doc, root_name + "_Busbars_Series")
-    for sub in (grp_bus_plus, grp_bus_minus, grp_bus_series):
+    # Pre-create busbar sub-groups in logical face order.
+    grp_bus_bottom = make_or_get_group(doc, root_name + "_Busbars_Bottom")
+    grp_bus_top    = make_or_get_group(doc, root_name + "_Busbars_Top")
+    for sub in (grp_bus_bottom, grp_bus_top):
         _try_add(grp_bus, sub)
 
     for grp in (grp_pack, grp_bus, grp_pol, grp_dir):
@@ -109,7 +108,7 @@ def draw_candidate_cells(
     doc, sketch_obj, points, radius, rotation, group, cfg
 ) -> None:
     normal  = get_sketch_normal(sketch_obj)
-    cell_z  = cfg.get("layer_z_candidates", cfg.get("layer_z_cells", 0.0))
+    cell_z  = cfg.get("layer_z_cells", 0.0)
     for i, pt in enumerate(points, start=1):
         gpt = _layer_pt(to_global(sketch_obj, pt[0], pt[1]), normal, cell_z)
         if cfg["make_2d"]:
@@ -132,7 +131,7 @@ def draw_selected_cell(
         draw_cylinder(doc, gpt, radius, cfg["cell_height"], rotation,
                       name + "_3D", group, color=color)
     if cfg["make_labels"]:
-        label_z  = cfg.get("layer_z_cell_labels", 0.0)
+        label_z  = cfg.get("layer_z_annotations", 0.0)
         label_pt = _layer_pt(to_global(sketch_obj, cell["x"], cell["y"]), normal, label_z)
         srot     = App.Rotation(App.Vector(0, 0, 1), normal)
         draw_text(doc, label_pt, f"{cell['series']}/{cell['parallel']}",

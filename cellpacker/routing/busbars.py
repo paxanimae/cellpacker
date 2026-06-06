@@ -105,50 +105,56 @@ def draw_parallel_busbars(
     sketch_normal: App.Vector,
 ) -> None:
     """
-    Connect like-polarity terminals within every series group.
+    Connect terminals within every series group on the correct face.
 
-    Creates two sub-groups under *parent_group*:
-      ``<root>_Busbars_Plus``  offset *plus_busbar_z* mm along the sketch normal
-      ``<root>_Busbars_Minus`` offset *minus_busbar_z* mm along the sketch normal
+    Odd groups  (S01, S03, …): + terminal at top face, − at bottom face.
+    Even groups (S02, S04, …): + terminal at bottom face, − at top face.
+
+    Groups are placed in ``<root>_Busbars_Top`` and ``<root>_Busbars_Bottom``.
     """
-    plus_off  = cfg.get("layer_z_plus_bus",  0.0)
-    minus_off = cfg.get("layer_z_minus_bus", 0.0)
+    top_z    = cfg.get("layer_z_top",    0.0)
+    bottom_z = cfg.get("layer_z_bottom", 0.0)
 
-    plus_color  = cfg.get("plus_busbar_color",  (0.85, 0.10, 0.10))
-    minus_color = cfg.get("minus_busbar_color", (0.10, 0.10, 0.85))
+    color_top    = cfg.get("plus_busbar_color",  (0.85, 0.10, 0.10))
+    color_bottom = cfg.get("minus_busbar_color", (0.10, 0.10, 0.85))
 
-    grp_plus  = make_or_get_group(doc, root_name + "_Busbars_Plus")
-    grp_minus = make_or_get_group(doc, root_name + "_Busbars_Minus")
-    _try_add(parent_group, grp_plus)
-    _try_add(parent_group, grp_minus)
+    grp_top    = make_or_get_group(doc, root_name + "_Busbars_Top")
+    grp_bottom = make_or_get_group(doc, root_name + "_Busbars_Bottom")
+    _try_add(parent_group, grp_top)
+    _try_add(parent_group, grp_bottom)
 
     total_s = max(selected_by_series.keys()) if selected_by_series else 1
 
     for s, row in selected_by_series.items():
         if len(row) < 2:
             continue
-        if cfg["colorize_series"]:
-            series_color = get_series_color(s, total_s)
+
+        color = get_series_color(s, total_s) if cfg["colorize_series"] else None
+
+        # Odd groups: + faces up (top face), − faces down (bottom face).
+        # Even groups: reversed.
+        if s % 2 == 1:
+            top_pol, bottom_pol = "plus",  "minus"
+            grp_top_use, grp_bot_use = grp_top, grp_bottom
+            c_top, c_bot = color or color_top, color or color_bottom
         else:
-            series_color = None
+            top_pol, bottom_pol = "minus", "plus"
+            grp_top_use, grp_bot_use = grp_top, grp_bottom
+            c_top, c_bot = color or color_bottom, color or color_top
 
-        c_plus  = series_color if series_color else plus_color
-        c_minus = series_color if series_color else minus_color
-
-        # Sort by X so the polyline runs left-to-right regardless of snake ordering.
-        # Offset along the sketch normal so busbars sit at the correct face of the
-        # cells even when the sketch is not in the world XY plane.
-        plus_pts  = sorted(
-            [_along_normal(terminal_lookup[(c["series"], c["parallel"])]["plus"],  sketch_normal, plus_off)  for c in row],
+        top_pts = sorted(
+            [_along_normal(terminal_lookup[(c["series"], c["parallel"])][top_pol],
+                           sketch_normal, top_z) for c in row],
             key=lambda p: p.x,
         )
-        minus_pts = sorted(
-            [_along_normal(terminal_lookup[(c["series"], c["parallel"])]["minus"], sketch_normal, minus_off) for c in row],
+        bot_pts = sorted(
+            [_along_normal(terminal_lookup[(c["series"], c["parallel"])][bottom_pol],
+                           sketch_normal, bottom_z) for c in row],
             key=lambda p: p.x,
         )
 
-        _busbar_path(doc, plus_pts,  f"BUS_PLUS_S{s:02d}",  grp_plus,  cfg, c_plus)
-        _busbar_path(doc, minus_pts, f"BUS_MINUS_S{s:02d}", grp_minus, cfg, c_minus)
+        _busbar_path(doc, top_pts, f"BUS_TOP_S{s:02d}",    grp_top_use, cfg, c_top)
+        _busbar_path(doc, bot_pts, f"BUS_BOTTOM_S{s:02d}", grp_bot_use, cfg, c_bot)
 
 
 # ── Series jumpers ────────────────────────────────────────────────────────
@@ -163,15 +169,22 @@ def draw_series_jumpers(
     sketch_normal: App.Vector,
 ) -> None:
     """
-    Connect consecutive series groups.
+    Connect consecutive series groups, staying on the correct face.
 
-    Each jumper is drawn at its own dedicated series layer so it is
-    visually distinct from the parallel busbar rails.
+    Odd group S → even group S+1: both share the TOP face
+      (S's + terminal is at top; S+1's − terminal is also at top).
+    Even group S → odd group S+1: both share the BOTTOM face.
+
+    Series jumpers are placed in the same top/bottom group as the
+    parallel busbars they connect to.
     """
-    series_off = cfg.get("layer_z_series", 0.0)
+    top_z    = cfg.get("layer_z_top",    0.0)
+    bottom_z = cfg.get("layer_z_bottom", 0.0)
 
-    grp = make_or_get_group(doc, root_name + "_Busbars_Series")
-    _try_add(parent_group, grp)
+    grp_top    = make_or_get_group(doc, root_name + "_Busbars_Top")
+    grp_bottom = make_or_get_group(doc, root_name + "_Busbars_Bottom")
+    _try_add(parent_group, grp_top)
+    _try_add(parent_group, grp_bottom)
 
     style   = cfg.get("series_jumper_style", "paired")
     total_s = max(selected_by_series.keys()) if selected_by_series else 1
@@ -183,28 +196,38 @@ def draw_series_jumpers(
         row_a  = selected_by_series[s]
         row_b  = selected_by_series[s_next]
 
-        plus_pts_a  = [_along_normal(terminal_lookup[(c["series"], c["parallel"])]["plus"],  sketch_normal, series_off) for c in row_a]
-        minus_pts_b = [_along_normal(terminal_lookup[(c["series"], c["parallel"])]["minus"], sketch_normal, series_off) for c in row_b]
+        # Odd S: + at top, next group's − also at top → top face jumper.
+        if s % 2 == 1:
+            jumper_z = top_z
+            grp      = grp_top
+            pol_a, pol_b = "plus", "minus"
+        else:
+            jumper_z = bottom_z
+            grp      = grp_bottom
+            pol_a, pol_b = "plus", "minus"
 
-        color = get_series_color(s, total_s) if cfg["colorize_series"] else (0.20, 0.20, 0.20)
+        pts_a = [_along_normal(terminal_lookup[(c["series"], c["parallel"])][pol_a],
+                               sketch_normal, jumper_z) for c in row_a]
+        pts_b = [_along_normal(terminal_lookup[(c["series"], c["parallel"])][pol_b],
+                               sketch_normal, jumper_z) for c in row_b]
+
+        color      = get_series_color(s, total_s) if cfg["colorize_series"] else (0.20, 0.20, 0.20)
         label_base = f"BUS_SER_S{s:02d}_S{s_next:02d}"
 
         if style == "paired":
-            # Sort both by X so snake-reversed rows pair left-to-left
-            # rather than crossing.
-            a_sorted = sorted(plus_pts_a,  key=lambda p: p.x)
-            b_sorted = sorted(minus_pts_b, key=lambda p: p.x)
+            a_sorted = sorted(pts_a, key=lambda p: p.x)
+            b_sorted = sorted(pts_b, key=lambda p: p.x)
             n = min(len(a_sorted), len(b_sorted))
             for j in range(n):
                 _busbar_path(doc, [a_sorted[j], b_sorted[j]],
                              f"{label_base}_P{j+1:02d}", grp, cfg, color)
 
         elif style == "rail":
-            a, b = _nearest_pair(plus_pts_a, minus_pts_b)
+            a, b = _nearest_pair(pts_a, pts_b)
             if a and b:
                 _busbar_path(doc, [a, b], label_base, grp, cfg, color)
 
         else:  # "single" / legacy
-            if plus_pts_a and minus_pts_b:
-                _busbar_path(doc, [plus_pts_a[0], minus_pts_b[-1]],
+            if pts_a and pts_b:
+                _busbar_path(doc, [pts_a[0], pts_b[-1]],
                              label_base, grp, cfg, color)

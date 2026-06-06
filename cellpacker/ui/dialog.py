@@ -345,19 +345,17 @@ the dialog. Adjust and preview as many times as you like, then click
 
             self.auto_z_step = self._dspin(d.get("auto_z_step", 1.0), 0.1, 50.0, 1)
             self._row(az, "Layer step (mm)", self.auto_z_step,
-                "Distance between adjacent layers along the sketch normal.\n"
-                "Each object type gets its own dedicated layer at index × step:\n"
-                "  0 × step  − busbar rails\n"
-                "  1 × step  (−) polarity markers and dots\n"
-                "  2 × step  candidate cell circles\n"
-                "  3 × step  selected cell circles\n"
-                "  4 × step  S/P text labels on cells\n"
-                "  5 × step  (+) polarity markers and dots\n"
-                "  6 × step  + busbar rails\n"
-                "  7 × step  series jumper wires\n"
-                "  8 × step  PACK+/PACK− output labels\n\n"
-                "Increase the step to spread layers further apart.\n"
-                "All layers = 0 when Auto-Z is unchecked.")
+                "Distance between the four physical layers along the sketch normal:\n\n"
+                "  0 × step  Bottom face  — busbar strips, series jumpers, and\n"
+                "                           polarity markers on the bottom side\n"
+                "  1 × step  Cells        — cell circles / cylinders\n"
+                "  2 × step  Top face     — busbar strips, series jumpers, and\n"
+                "                           polarity markers on the top side\n"
+                "  3 × step  Annotations  — S/P labels, PACK+/PACK−, arrow\n\n"
+                "Which face a busbar or marker belongs to depends on the series\n"
+                "group parity (odd groups have + at top, even groups have + at bottom).\n\n"
+                "Increase step to spread layers further apart in the viewport.\n"
+                "Uncheck Auto-Z to draw everything flat on the sketch plane.")
 
             f.addRow(self.auto_z_grp)
 

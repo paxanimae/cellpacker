@@ -41,11 +41,16 @@ def draw_polarity_markers(
     sketch_normal: App.Vector | None = None,
 ) -> None:
     """Draw + / − text labels and optional terminal dots for every cell."""
-    plus_z  = cfg.get("layer_z_plus_markers",  0.0)
-    minus_z = cfg.get("layer_z_minus_markers", 0.0)
-    srot    = _sketch_rot(sketch_normal)
+    top_z    = cfg.get("layer_z_top",    0.0)
+    bottom_z = cfg.get("layer_z_bottom", 0.0)
+    srot     = _sketch_rot(sketch_normal)
     for (s, p), info in terminal_lookup.items():
-        name     = f"S{s:02d}_P{p:02d}"
+        name = f"S{s:02d}_P{p:02d}"
+        # Odd groups: + at top face, − at bottom face.  Even groups: reversed.
+        if s % 2 == 1:
+            plus_z, minus_z = top_z, bottom_z
+        else:
+            plus_z, minus_z = bottom_z, top_z
         plus_pt  = _offset(info["plus"],  sketch_normal, plus_z)
         minus_pt = _offset(info["minus"], sketch_normal, minus_z)
 
@@ -78,7 +83,7 @@ def draw_pack_terminals(
     sorted_s  = sorted(selected_by_series.keys())
     s_first   = sorted_s[0]
     s_last    = sorted_s[-1]
-    pack_z = cfg.get("layer_z_pack", 0.0)
+    pack_z = cfg.get("layer_z_annotations", 0.0)
     dot_r  = cfg.get("terminal_dot_radius", 1.5) * 3.0  # larger circle
 
     def _rail_centroid(cells, polarity: str) -> App.Vector:

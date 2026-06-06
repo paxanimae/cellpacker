@@ -94,7 +94,6 @@ def run() -> None:
         best = sweep_angles(face, bbox, angle_list, params, cfg)
 
         print("─" * 50)
-        print(f"Mode             : {cfg['mode']}")
         print(f"Best angle       : {best['angle']:.2f}°")
         print(f"Candidate cells  : {len(best['points'])}")
         print(f"Selected         : {best['selected_count']} / "

@@ -1,11 +1,18 @@
 """
 cellpacker.layout.rows
 ~~~~~~~~~~~~~~~~~~~~~~
-Cluster a flat list of 2-D points into horizontal rows.
+Cluster a flat list of 2-D points into rows.
+
+Rows are bands of equal perpendicular distance from a reference direction
+(the hex-grid angle).  Passing *angle_deg* rotates all points into the
+grid frame before clustering, so rows are always correctly identified
+regardless of grid orientation.
 """
 
 from __future__ import annotations
 from typing import TypeAlias
+
+from cellpacker.geometry.transforms import rotate_2d
 
 Point: TypeAlias = tuple[float, float]
 Row: TypeAlias = list[Point]
@@ -15,11 +22,18 @@ def cluster_rows(
     points: list[Point],
     pitch_y: float,
     tol: float | None = None,
+    angle_deg: float = 0.0,
 ) -> list[Row]:
     """
-    Group *points* into rows by Y proximity.
-    Default *tol* is ``pitch_y * 0.35``.
-    Returns rows sorted ascending by Y, each row sorted ascending by X.
+    Group *points* into rows.
+
+    Points are rotated by *angle_deg* into the grid frame so that each hex
+    row lands at a distinct Y value.  Clustering is done in that rotated
+    frame; the returned rows contain the original (un-rotated) coordinates.
+
+    Default *tol* is ``pitch_y * 0.35`` — just under half the row spacing.
+    Rows are returned sorted by increasing perpendicular distance from the
+    reference direction; each row is sorted by position along the row.
     """
     if not points:
         return []
@@ -27,29 +41,28 @@ def cluster_rows(
     if tol is None:
         tol = pitch_y * 0.35
 
-    pts = sorted(points, key=lambda p: p[1])
-
-    # Diagnostic: print Y spread so we can spot coordinate system issues
-    y_vals = [p[1] for p in pts]
-    print(f"BatteryPackLayoutTool: clustering {len(pts)} points, "
-          f"Y range [{y_vals[0]:.1f}, {y_vals[-1]:.1f}], pitch_y={pitch_y:.2f}, tol={tol:.2f}")
+    # Sort by rotated-Y (perpendicular distance from reference direction)
+    keyed = sorted(
+        ((rotate_2d(x, y, angle_deg)[1], (x, y)) for x, y in points),
+        key=lambda t: t[0],
+    )
 
     rows: list[Row] = []
-    current: Row = [pts[0]]
+    current: Row = [keyed[0][1]]
+    current_ry: float = keyed[0][0]
 
-    for p in pts[1:]:
-        if abs(p[1] - current[-1][1]) <= tol:
-            current.append(p)
+    for ry, pt in keyed[1:]:
+        if abs(ry - current_ry) <= tol:
+            current.append(pt)
         else:
             rows.append(current)
-            current = [p]
+            current = [pt]
+            current_ry = ry
     rows.append(current)
 
+    # Sort each row by position along the edge direction (rotated-X)
     for row in rows:
-        row.sort(key=lambda p: p[0])
-
-    row_sizes = [len(r) for r in rows]
-    print(f"BatteryPackLayoutTool: {len(rows)} rows, sizes: {row_sizes}")
+        row.sort(key=lambda p: rotate_2d(p[0], p[1], angle_deg)[0])
 
     return rows
 

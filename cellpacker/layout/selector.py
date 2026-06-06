@@ -24,14 +24,16 @@ def select_compact_sp(
     target_s: int,
     target_p: int,
     cfg: dict,
+    angle_deg: float = 0.0,
 ) -> tuple[list[dict] | None, list, list]:
     """
     Return ``(selected_cells, all_rows, valid_rows_list)``.
 
     *selected_cells* is ``None`` when no valid window exists.
     Each cell dict has keys: ``series``, ``parallel``, ``x``, ``y``.
+    *angle_deg* is the grid angle used for correct row clustering.
     """
-    rows = cluster_rows(points, pitch_y)
+    rows = cluster_rows(points, pitch_y, angle_deg=angle_deg)
 
     if len(rows) < target_s:
         return None, rows, valid_rows(rows, target_p)

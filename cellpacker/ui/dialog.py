@@ -247,6 +247,7 @@ the dialog. Adjust and preview as many times as you like, then click
             self.plus_busbar_z = self._dspin(d["plus_busbar_z"], -500.0, 500.0)
             f.addRow("  + terminal layer Z (mm)", self.plus_busbar_z)
 
+            self._auto_z_signal_connected = False
             self.auto_z.stateChanged.connect(self._on_auto_z)
 
             scroll.setWidget(inner)
@@ -258,15 +259,14 @@ the dialog. Adjust and preview as many times as you like, then click
             on = bool(state)
             self.plus_busbar_z.setEnabled(not on)
             self.minus_busbar_z.setEnabled(not on)
-            try:
-                self.cell_height.valueChanged.disconnect(self.plus_busbar_z.setValue)
-            except Exception:
-                pass
-            if on:
+            if on and not self._auto_z_signal_connected:
                 self.cell_height.valueChanged.connect(self.plus_busbar_z.setValue)
+                self._auto_z_signal_connected = True
                 self.plus_busbar_z.setValue(self.cell_height.value())
                 self.minus_busbar_z.setValue(0.0)
-            else:
+            elif not on and self._auto_z_signal_connected:
+                self.cell_height.valueChanged.disconnect(self.plus_busbar_z.setValue)
+                self._auto_z_signal_connected = False
                 self.plus_busbar_z.setValue(0.0)
                 self.minus_busbar_z.setValue(0.0)
 

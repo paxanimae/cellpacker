@@ -31,6 +31,16 @@ def to_global(sketch_obj, x: float, y: float, z: float = 0.0):
     return sketch_obj.Placement.multVec(App.Vector(x, y, z))
 
 
+def get_edge_local_endpoints(
+    sketch_obj, edge
+) -> tuple[tuple[float, float], tuple[float, float]]:
+    """Return the two endpoints of *edge* in local sketch coordinates."""
+    inv = sketch_obj.Placement.inverse()
+    p1 = inv.multVec(edge.Vertexes[0].Point)
+    p2 = inv.multVec(edge.Vertexes[1].Point)
+    return (p1.x, p1.y), (p2.x, p2.y)
+
+
 def get_edge_angle_in_local_coords(
     sketch_obj, edge, fallback_angle_deg: float = 0.0
 ) -> float:

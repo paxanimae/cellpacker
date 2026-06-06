@@ -1,0 +1,222 @@
+"""
+BatteryPackLayoutTool_v3.FCMacro
+=================================
+FreeCAD macro for arranging battery cells inside a given geometry and
+generating a wiring layout.
+
+This file is the *thin* entry point.  All logic lives in the ``cellpacker``
+package, which must be on ``sys.path`` (place it next to this macro, or
+add it to FreeCAD's macro search path).
+
+Usage
+-----
+1. Draw a closed sketch representing the usable pack boundary.
+2. Select the sketch.  Optionally also Ctrl-select a straight edge to
+   align the hex grid to a specific direction.
+3. Run this macro.
+"""
+
+import sys
+import os
+
+# ── Ensure the cellpacker package is importable ────────────────────────────
+_macro_dir = os.path.dirname(os.path.abspath(__file__))
+if _macro_dir not in sys.path:
+    sys.path.insert(0, _macro_dir)
+
+# ── Flush any cached cellpacker modules so edits take effect immediately ───
+for _mod in [k for k in sys.modules if k == "cellpacker" or k.startswith("cellpacker.")]:
+    del sys.modules[_mod]
+
+# ── Imports ────────────────────────────────────────────────────────────────
+import FreeCAD as App
+import FreeCADGui as Gui
+
+from cellpacker.defaults import DEFAULTS
+from cellpacker.utils import parse_float_list, ensure_active_doc
+from cellpacker.ui.dialog import get_user_settings
+from cellpacker.ui.selection import get_selected_sketch_and_edge
+from cellpacker.geometry.face import get_local_face
+from cellpacker.geometry.grid import grid_params_from_config
+from cellpacker.geometry.transforms import get_edge_angle_in_local_coords
+from cellpacker.layout.sweep import sweep_angles
+from cellpacker.geometry.layers import build_layers
+from cellpacker.layout.selector import build_selected_by_series
+from cellpacker.drawing.cells import (
+    make_or_get_group,
+    build_pack_groups,
+    build_series_groups,
+    draw_candidate_cells,
+    draw_all_selected_cells,
+    get_sketch_normal,
+    _delete_tree,
+)
+from cellpacker.drawing.annotations import (
+    draw_polarity_markers,
+    draw_pack_terminals,
+    draw_alignment_arrow,
+)
+from cellpacker.routing.busbars import draw_parallel_busbars, draw_series_busbars
+
+
+# ── Main ───────────────────────────────────────────────────────────────────
+
+def run() -> None:
+    print("BatteryPackLayoutTool v3 — cellpacker loaded from:", __import__("cellpacker").__file__)
+    doc = ensure_active_doc()
+
+    # ── Selection + geometry (done once, shared by preview and final draw) ──
+    sketch_obj, alignment_edge = get_selected_sketch_and_edge()
+    face          = get_local_face(sketch_obj)
+    bbox          = face.BoundBox
+    rotation      = sketch_obj.Placement.Rotation
+    sketch_normal = get_sketch_normal(sketch_obj)
+
+    # Track the last preview root so Cancel can clean it up.
+    _last_root: list[str] = []
+
+    def _draw(cfg: dict) -> None:
+        """Run layout + draw for *cfg*.  Called by Preview button and OK."""
+        # Merge per-type layer Z offsets into cfg so all drawing functions
+        # can look them up by key without needing extra arguments.
+        cfg = {**cfg, **build_layers(cfg)}
+        params = grid_params_from_config(cfg)
+
+        # Build angle list
+        if cfg["use_selected_edge_alignment"]:
+            base_angle = get_edge_angle_in_local_coords(
+                sketch_obj, alignment_edge,
+                fallback_angle_deg=cfg["fallback_angle_deg"],
+            )
+            angle_list = [
+                base_angle + d
+                for d in parse_float_list(cfg["edge_angle_offsets_deg"], [0.0])
+            ]
+            print(f"BatteryPackLayoutTool: edge base angle = {base_angle:.2f}°")
+        else:
+            angle_list = parse_float_list(cfg["angles_deg"], [0, 5, 10, 15, 20, 25, 30])
+
+        best = sweep_angles(face, bbox, angle_list, params, cfg)
+
+        print("─" * 50)
+        print(f"Best angle       : {best['angle']:.2f}°")
+        print(f"Candidate cells  : {len(best['points'])}")
+        print(f"Selected         : {best['selected_count']} / "
+              f"{cfg['target_s'] * cfg['target_p']}")
+        if best["selected_count"] < cfg["target_s"] * cfg["target_p"]:
+            print(f"WARNING: cannot fit a full "
+                  f"{cfg['target_s']}s{cfg['target_p']}p pack.")
+        print("─" * 50)
+
+        # ── Always run pack layout ───────────────────────────────────────
+        new_root = f"BatteryPack_{cfg['target_s']}s{cfg['target_p']}p"
+
+        # If S×P changed since last preview, the old root won't be cleaned
+        # by build_pack_groups (which only deletes its own name), so we do it.
+        if _last_root and _last_root[0] != new_root:
+            _delete_tree(doc, _last_root[0])
+        _last_root.clear()
+        _last_root.append(new_root)
+
+        groups = build_pack_groups(doc, new_root)
+
+        if cfg.get("show_candidates", True):
+            try:
+                groups["root"].addObject(groups["all_candidates"])
+            except Exception:
+                pass
+            draw_candidate_cells(doc, sketch_obj, best["points"],
+                                 params.radius, rotation,
+                                 groups["all_candidates"], cfg)
+            if not cfg.get("candidates_visible", True):
+                try:
+                    groups["all_candidates"].ViewObject.Visibility = False
+                except Exception:
+                    pass
+
+        if cfg["draw_alignment_arrow"]:
+            draw_alignment_arrow(doc, sketch_obj, best["angle"],
+                                 "PackDirection", groups["direction"],
+                                 cfg["alignment_arrow_length"])
+
+        series_groups = build_series_groups(
+            doc, new_root, cfg["target_s"], groups["selected"])
+
+        selected_by_series = build_selected_by_series(best["selected"])
+
+        if not selected_by_series:
+            print("BatteryPackLayoutTool: no valid cell window found — "
+                  "pack does not fit the sketch at any tested angle.")
+            return
+
+        terminal_lookup = draw_all_selected_cells(
+            doc, sketch_obj, selected_by_series,
+            params.radius, rotation, series_groups, cfg)
+
+        draw_polarity_markers(doc, terminal_lookup, groups["polarity"], cfg, sketch_normal)
+
+        if cfg.get("draw_pack_terminal_labels", True):
+            draw_pack_terminals(doc, selected_by_series, terminal_lookup,
+                                groups["polarity"], cfg, sketch_normal)
+
+        if cfg["draw_busbars"]:
+            draw_parallel_busbars(doc, selected_by_series, terminal_lookup,
+                                  groups["busbars"], new_root, cfg, sketch_normal)
+            draw_series_busbars(doc, selected_by_series, terminal_lookup,
+                                groups["busbars"], new_root, cfg, sketch_normal)
+
+        doc.recompute()
+        Gui.ActiveDocument.ActiveView.fitAll()
+
+    def _cleanup() -> None:
+        """Remove the last preview from the document (called on Cancel)."""
+        if _last_root:
+            _delete_tree(doc, _last_root[0])
+            doc.recompute()
+
+    cfg = get_user_settings(DEFAULTS, preview_fn=_draw, cleanup_fn=_cleanup)
+    if cfg is None:
+        _cleanup()
+        print("BatteryPackLayoutTool: cancelled.")
+        return
+
+    # ── Busbar catalog validation ────────────────────────────────────────
+    try:
+        from cellpacker.busbar_catalog import load_catalog, validate_fit
+        catalog = load_catalog()
+        fit = validate_fit(catalog, cfg["cell_diameter"])
+        if fit != "ok":
+            from PySide2 import QtWidgets
+            if fit == "no_catalog_match":
+                msg = (
+                    f"No busbars in the catalog are compatible with "
+                    f"{cfg['cell_diameter']:.1f} mm cells.\n\n"
+                    "You can still generate the pack without busbars, or add a "
+                    "compatible entry to cellpacker/busbars.json and re-run."
+                )
+                btns = QtWidgets.QMessageBox.Ok | QtWidgets.QMessageBox.Cancel
+            else:  # none_in_stock
+                msg = (
+                    f"The catalog has busbars for {cfg['cell_diameter']:.1f} mm cells "
+                    "but none are marked in_stock.\n\n"
+                    "Mark the strips you have available in cellpacker/busbars.json, "
+                    "or continue anyway to generate the pack without a busbar selection."
+                )
+                btns = QtWidgets.QMessageBox.Ok | QtWidgets.QMessageBox.Cancel
+
+            reply = QtWidgets.QMessageBox.warning(
+                None, "Busbar catalog", msg, btns,
+            )
+            if reply == QtWidgets.QMessageBox.Cancel:
+                _cleanup()
+                print("BatteryPackLayoutTool: cancelled (no matching busbar).")
+                return
+    except Exception as exc:
+        print(f"BatteryPackLayoutTool: busbar catalog check skipped — {exc}")
+
+    _draw(cfg)
+    print("BatteryPackLayoutTool: done.")
+
+
+# Entry point when executed as a FreeCAD macro
+run()

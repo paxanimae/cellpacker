@@ -19,10 +19,9 @@ def get_series_color(
     """
     Return an RGB color for *series_idx* (1-based) out of *total_series*.
 
-    Uses a full hue rotation so neighbouring series groups have distinct
-    colors even for large packs.
+    Uses the golden-ratio hue step (~137.5° per step) so adjacent series
+    groups always land on maximally separated hues regardless of pack size.
     """
-    if total_series <= 1:
-        return (0.8, 0.2, 0.2)
-    h = float(series_idx - 1) / float(total_series)
-    return hsv_to_rgb(h, 0.65, 0.95)
+    _GOLDEN = 0.6180339887498949
+    h = (series_idx * _GOLDEN) % 1.0
+    return hsv_to_rgb(h, 0.72, 0.92)

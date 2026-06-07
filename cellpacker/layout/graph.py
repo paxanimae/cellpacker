@@ -198,10 +198,11 @@ def find_series_path(
     allow_jumps: bool,
     bbox,
     n_starts: int = 30,
-) -> dict:
-    """Find the best S×P series path through *points*.
+    top_n: int = 5,
+) -> list[dict]:
+    """Find up to *top_n* distinct S×P series paths through *points*.
 
-    Returns a dict with keys:
+    Returns a list of result dicts sorted best→worst.  Each dict has:
 
     path            list[frozenset[int]] | None — ordered clusters
     selected        list[dict] | None           — cell dicts (series/parallel/x/y)
@@ -210,11 +211,15 @@ def find_series_path(
     failure         str | None                  — key into FAILURE_MESSAGES, or None
     minus_achieved  str | None                  — compass name where PACK− landed
     plus_achieved   str | None                  — compass name where PACK+ landed
+
+    On complete failure, returns a single-element list containing a failure dict.
+    Duplicate paths (same cell sets) are deduplicated so each alternative is
+    genuinely different.
     """
     n = len(points)
 
     if n < target_s * target_p:
-        return _fail("not_enough_candidates")
+        return [_fail("not_enough_candidates")]
 
     graph = build_adjacency_graph(points, pitch_x)
     minus_pt = _corner_point(minus_corner, bbox)
@@ -229,7 +234,9 @@ def find_series_path(
 
     starts = sorted(range(n), key=lambda i: _dist(points[i], minus_pt))
 
-    best: dict | None = None
+    # (score, result) heap kept trimmed to top_n
+    candidates: list[tuple[float, dict]] = []
+    seen_paths: set[frozenset] = set()
     last_failure = "no_adjacent_path"
 
     for seed in starts[:n_starts]:
@@ -281,25 +288,37 @@ def find_series_path(
             last_failure = failure or "dead_end"
             continue
 
+        # Skip duplicate arrangements
+        path_key = frozenset(frozenset(cl) for cl in path)
+        if path_key in seen_paths:
+            continue
+        seen_paths.add(path_key)
+
         score = _score_path(path, points, minus_pt, plus_pt)
-        if best is None or score < best["_score"]:
-            selected = path_to_selected_cells(path, points)
-            best = {
-                "path":           path,
-                "selected":       selected,
-                "selected_count": len(selected),
-                "jumps":          jumps,
-                "failure":        None,
-                "minus_achieved": _classify_position(_centroid(path[0],  points), bbox),
-                "plus_achieved":  _classify_position(_centroid(path[-1], points), bbox),
-                "_score":         score,
-            }
+        selected = path_to_selected_cells(path, points)
+        result = {
+            "path":           path,
+            "selected":       selected,
+            "selected_count": len(selected),
+            "jumps":          jumps,
+            "failure":        None,
+            "minus_achieved": _classify_position(_centroid(path[0],  points), bbox),
+            "plus_achieved":  _classify_position(_centroid(path[-1], points), bbox),
+            "_score":         score,
+        }
+        candidates.append((score, result))
+        candidates.sort(key=lambda x: x[0])
+        if len(candidates) > top_n:
+            candidates = candidates[:top_n]
 
-    if best is None:
-        return _fail(last_failure)
+    if not candidates:
+        return [_fail(last_failure)]
 
-    best.pop("_score")
-    return best
+    results = []
+    for _, r in candidates:
+        r.pop("_score", None)
+        results.append(r)
+    return results
 
 
 def path_to_selected_cells(

@@ -14,13 +14,18 @@ def get_user_settings(
     defaults: dict = DEFAULTS,
     preview_fn=None,
     cleanup_fn=None,
+    prev_fn=None,
+    next_fn=None,
+    nav_info_fn=None,
 ) -> dict | None:
     """
     Show the settings dialog and return the chosen configuration dict,
     or ``None`` if the user cancelled.
 
-    *preview_fn(cfg)*  – called when the user clicks Preview.
-    *cleanup_fn()*     – called when the user cancels.
+    *preview_fn(cfg)*          – called when the user clicks Preview.
+    *cleanup_fn()*             – called when the user cancels.
+    *prev_fn()* / *next_fn()* – navigate to the previous/next solution.
+    *nav_info_fn()*            – returns (current, total, info_text).
     """
     try:
         from PySide2 import QtWidgets as Qt, QtCore  # noqa: F401
@@ -51,6 +56,84 @@ def get_user_settings(
             self.cell_diameter.valueChanged.connect(self._refresh_busbar_list)
             self._refresh_busbar_list()     # initial catalog population
 
+            # ── Solution browser nav bar ──────────────────────────────────
+            sep_top = Qt.QFrame()
+            sep_top.setFrameShape(Qt.QFrame.HLine)
+            sep_top.setFrameShadow(Qt.QFrame.Sunken)
+            root.addWidget(sep_top)
+
+            nav_bar = Qt.QWidget()
+            nav_outer = Qt.QVBoxLayout(nav_bar)
+            nav_outer.setContentsMargins(4, 4, 4, 2)
+            nav_outer.setSpacing(2)
+
+            # Row 1: ← counter →
+            nav_row = Qt.QHBoxLayout()
+            nav_row.setSpacing(6)
+
+            self._nav_prev = Qt.QPushButton("←")
+            self._nav_prev.setFixedWidth(36)
+            self._nav_prev.setEnabled(False)
+            self._nav_prev.setToolTip("Show previous layout alternative")
+
+            self._nav_pos = Qt.QLabel("Layout — of —")
+            self._nav_pos.setAlignment(Qt.Qt.AlignCenter)
+
+            self._nav_next = Qt.QPushButton("→")
+            self._nav_next.setFixedWidth(36)
+            self._nav_next.setEnabled(False)
+            self._nav_next.setToolTip("Show next layout alternative")
+
+            nav_row.addStretch()
+            nav_row.addWidget(self._nav_prev)
+            nav_row.addWidget(self._nav_pos)
+            nav_row.addWidget(self._nav_next)
+            nav_row.addStretch()
+
+            # Row 2: info line
+            self._nav_info = Qt.QLabel("Run Preview to compute layouts")
+            self._nav_info.setAlignment(Qt.Qt.AlignCenter)
+            self._nav_info.setStyleSheet("color: gray;")
+
+            nav_outer.addLayout(nav_row)
+            nav_outer.addWidget(self._nav_info)
+            root.addWidget(nav_bar)
+
+            def _update_nav():
+                if nav_info_fn is None:
+                    return
+                cur, tot, info = nav_info_fn()
+                if tot == 0:
+                    self._nav_pos.setText("Layout — of —")
+                    self._nav_info.setText(info)
+                    self._nav_prev.setEnabled(False)
+                    self._nav_next.setEnabled(False)
+                else:
+                    self._nav_pos.setText(f"Layout {cur} of {tot}")
+                    self._nav_info.setText(info)
+                    self._nav_info.setStyleSheet("")
+                    self._nav_prev.setEnabled(cur > 1)
+                    self._nav_next.setEnabled(cur < tot)
+
+            def _on_prev():
+                if prev_fn is not None:
+                    prev_fn()
+                _update_nav()
+
+            def _on_next():
+                if next_fn is not None:
+                    next_fn()
+                _update_nav()
+
+            self._nav_prev.clicked.connect(_on_prev)
+            self._nav_next.clicked.connect(_on_next)
+
+            sep_bot = Qt.QFrame()
+            sep_bot.setFrameShape(Qt.QFrame.HLine)
+            sep_bot.setFrameShadow(Qt.QFrame.Sunken)
+            root.addWidget(sep_bot)
+
+            # ── Button box ────────────────────────────────────────────────
             btns = Qt.QDialogButtonBox(
                 Qt.QDialogButtonBox.Ok | Qt.QDialogButtonBox.Cancel
             )
@@ -58,13 +141,16 @@ def get_user_settings(
             btns.rejected.connect(self.reject)
 
             if preview_fn is not None:
-                prev = btns.addButton("Preview", Qt.QDialogButtonBox.ActionRole)
-                prev.setToolTip(
+                prev_btn = btns.addButton("Preview", Qt.QDialogButtonBox.ActionRole)
+                prev_btn.setToolTip(
                     "Run the layout with the current settings and draw it into\n"
                     "the FreeCAD viewport — without closing this dialog.\n"
                     "Adjust settings and click Preview again to update."
                 )
-                prev.clicked.connect(lambda: preview_fn(self.values()))
+                def _on_preview():
+                    preview_fn(self.values())
+                    _update_nav()
+                prev_btn.clicked.connect(_on_preview)
 
             save_btn = btns.addButton("Save as Defaults", Qt.QDialogButtonBox.ActionRole)
             save_btn.setToolTip(

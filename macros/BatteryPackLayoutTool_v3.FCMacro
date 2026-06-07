@@ -73,75 +73,49 @@ def run() -> None:
     rotation      = sketch_obj.Placement.Rotation
     sketch_normal = get_sketch_normal(sketch_obj)
 
-    # Track the last preview root so Cancel can clean it up.
-    _last_root: list[str] = []
+    # ── Shared compute state (mutated by nested closures) ────────────────
+    _state: dict = {
+        "cfg":        None,  # last cfg used for compute
+        "params":     None,  # grid params
+        "points":     [],    # candidate cell positions
+        "grid_angle": 0.0,
+        "solutions":  [],    # list[dict] sorted best→worst
+        "idx":        0,     # currently displayed solution index
+        "last_root":  [],    # [name] of last FreeCAD group, for cleanup
+    }
 
-    def _draw(cfg: dict) -> None:
-        """Run layout + draw for *cfg*.  Called by Preview button and OK."""
-        # Merge per-type layer Z offsets into cfg so all drawing functions
-        # can look them up by key without needing extra arguments.
-        cfg = {**cfg, **build_layers(cfg)}
-        params = grid_params_from_config(cfg)
+    # ── Render one specific solution ──────────────────────────────────────
 
-        # ── Candidate generation ────────────────────────────────────────
-        if cfg["use_selected_edge_alignment"] and alignment_edge is not None:
-            p1_local, p2_local = get_edge_local_endpoints(sketch_obj, alignment_edge)
-            grid_angle = get_edge_angle_in_local_coords(
-                sketch_obj, alignment_edge,
-                fallback_angle_deg=cfg["fallback_angle_deg"],
-            )
-            print(f"BatteryPackLayoutTool: edge angle = {grid_angle:.2f}° — edge-anchored grid")
-            points = generate_candidates_from_edge(face, p1_local, p2_local, params)
-        else:
-            angle_list = parse_float_list(cfg["angles_deg"], [0, 5, 10, 15, 20, 25, 30])
-            grid_angle, points = sweep_for_candidates(face, bbox, angle_list, params)
-            print(f"BatteryPackLayoutTool: sweep best angle = {grid_angle:.2f}°")
-
-        # ── Group / terminal placement (graph search) ───────────────────
-        result = find_series_path(
-            points, params.pitch_x,
-            cfg["target_s"], cfg["target_p"],
-            cfg.get("pack_minus_target", "bottom-left"),
-            cfg.get("pack_plus_target",  "top-right"),
-            cfg.get("allow_jumps", False),
-            bbox,
-        )
+    def _render(cfg: dict, solution: dict) -> None:
+        """Draw *solution* into FreeCAD using the precomputed _state."""
+        params = _state["params"]
+        points = _state["points"]
 
         print("─" * 50)
-        print(f"Grid angle       : {grid_angle:.2f}°")
-        print(f"Candidate cells  : {len(points)}")
-        print(f"Selected         : {result['selected_count']} / "
-              f"{cfg['target_s'] * cfg['target_p']}")
-        if result["failure"]:
-            print(f"WARNING: {FAILURE_MESSAGES.get(result['failure'], result['failure'])}")
+        print(f"Grid angle      : {_state['grid_angle']:.2f}°")
+        print(f"Candidate cells : {len(points)}")
+        print(f"Selected        : {solution['selected_count']} / "
+              f"{cfg['target_s'] * cfg['target_p']}"
+              f"  (layout {_state['idx'] + 1} of {len(_state['solutions'])})")
+        if solution["failure"]:
+            print(f"WARNING: {FAILURE_MESSAGES.get(solution['failure'], solution['failure'])}")
         else:
-            achieved_minus = result["minus_achieved"]
-            achieved_plus  = result["plus_achieved"]
-            target_minus   = cfg.get("pack_minus_target", "bottom-left")
-            target_plus    = cfg.get("pack_plus_target",  "top-right")
-            minus_ok = "✓" if achieved_minus == target_minus else f"→ achieved: {achieved_minus}"
-            plus_ok  = "✓" if achieved_plus  == target_plus  else f"→ achieved: {achieved_plus}"
-            print(f"PACK−  target: {target_minus:12s}  {minus_ok}")
-            print(f"PACK+  target: {target_plus:12s}  {plus_ok}")
-            if result["jumps"]:
-                print(f"Jumps at series steps: {result['jumps']}")
+            am = solution["minus_achieved"]
+            ap = solution["plus_achieved"]
+            tm = cfg.get("pack_minus_target", "bottom-left")
+            tp = cfg.get("pack_plus_target",  "top-right")
+            print(f"PACK−  target: {tm:12s}  {'✓' if am == tm else '→ achieved: ' + am}")
+            print(f"PACK+  target: {tp:12s}  {'✓' if ap == tp else '→ achieved: ' + ap}")
+            if solution["jumps"]:
+                print(f"Jumps at series steps: {solution['jumps']}")
         print("─" * 50)
 
-        best = {
-            "angle":          grid_angle,
-            "points":         points,
-            "selected":       result["selected"],
-            "selected_count": result["selected_count"],
-        }
-        # ── Always run pack layout ───────────────────────────────────────
         new_root = f"BatteryPack_{cfg['target_s']}s{cfg['target_p']}p"
-
-        # If S×P changed since last preview, the old root won't be cleaned
-        # by build_pack_groups (which only deletes its own name), so we do it.
-        if _last_root and _last_root[0] != new_root:
-            _delete_tree(doc, _last_root[0])
-        _last_root.clear()
-        _last_root.append(new_root)
+        last = _state["last_root"]
+        if last and last[0] != new_root:
+            _delete_tree(doc, last[0])
+        last.clear()
+        last.append(new_root)
 
         groups = build_pack_groups(doc, new_root)
 
@@ -150,7 +124,7 @@ def run() -> None:
                 groups["root"].addObject(groups["all_candidates"])
             except Exception:
                 pass
-            draw_candidate_cells(doc, sketch_obj, best["points"],
+            draw_candidate_cells(doc, sketch_obj, points,
                                  params.radius, rotation,
                                  groups["all_candidates"], cfg)
             if not cfg.get("candidates_visible", True):
@@ -160,18 +134,16 @@ def run() -> None:
                     pass
 
         if cfg["draw_alignment_arrow"]:
-            draw_alignment_arrow(doc, sketch_obj, best["angle"],
+            draw_alignment_arrow(doc, sketch_obj, _state["grid_angle"],
                                  "PackDirection", groups["direction"],
                                  cfg["alignment_arrow_length"])
 
         series_groups = build_series_groups(
             doc, new_root, cfg["target_s"], groups["selected"])
-
-        selected_by_series = build_selected_by_series(best["selected"])
+        selected_by_series = build_selected_by_series(solution["selected"])
 
         if not selected_by_series:
-            print("BatteryPackLayoutTool: no valid cell window found — "
-                  "pack does not fit the sketch at any tested angle.")
+            print("BatteryPackLayoutTool: no valid cell window found.")
             return
 
         terminal_lookup = draw_all_selected_cells(
@@ -193,13 +165,96 @@ def run() -> None:
         doc.recompute()
         Gui.ActiveDocument.ActiveView.fitAll()
 
+    # ── Full recompute (called by Preview) ────────────────────────────────
+
+    def _draw(cfg: dict) -> None:
+        """Recompute candidates + solutions, then render solution 0."""
+        cfg = {**cfg, **build_layers(cfg)}
+        params = grid_params_from_config(cfg)
+
+        if cfg["use_selected_edge_alignment"] and alignment_edge is not None:
+            p1_local, p2_local = get_edge_local_endpoints(sketch_obj, alignment_edge)
+            grid_angle = get_edge_angle_in_local_coords(
+                sketch_obj, alignment_edge,
+                fallback_angle_deg=cfg["fallback_angle_deg"],
+            )
+            print(f"BatteryPackLayoutTool: edge angle = {grid_angle:.2f}° — edge-anchored grid")
+            points = generate_candidates_from_edge(face, p1_local, p2_local, params)
+        else:
+            angle_list = parse_float_list(cfg["angles_deg"], [0, 5, 10, 15, 20, 25, 30])
+            grid_angle, points = sweep_for_candidates(face, bbox, angle_list, params)
+            print(f"BatteryPackLayoutTool: sweep best angle = {grid_angle:.2f}°")
+
+        solutions = find_series_path(
+            points, params.pitch_x,
+            cfg["target_s"], cfg["target_p"],
+            cfg.get("pack_minus_target", "bottom-left"),
+            cfg.get("pack_plus_target",  "top-right"),
+            cfg.get("allow_jumps", False),
+            bbox,
+            top_n=5,
+        )
+
+        _state["cfg"]        = cfg
+        _state["params"]     = params
+        _state["points"]     = points
+        _state["grid_angle"] = grid_angle
+        _state["solutions"]  = solutions
+        _state["idx"]        = 0
+
+        print(f"BatteryPackLayoutTool: {len(solutions)} distinct layout(s) found")
+        _render(cfg, solutions[0])
+
+    # ── Navigation (no recompute — just switch between stored solutions) ──
+
+    def _prev() -> None:
+        if _state["solutions"] and _state["idx"] > 0:
+            _state["idx"] -= 1
+            _render(_state["cfg"], _state["solutions"][_state["idx"]])
+
+    def _next() -> None:
+        sols = _state["solutions"]
+        if sols and _state["idx"] < len(sols) - 1:
+            _state["idx"] += 1
+            _render(_state["cfg"], _state["solutions"][_state["idx"]])
+
+    def _nav_info() -> tuple:
+        """Return (current_1based, total, info_text) for the dialog nav bar."""
+        sols = _state["solutions"]
+        if not sols:
+            return (0, 0, "Run Preview to compute layouts")
+        idx = _state["idx"]
+        sol = sols[idx]
+        cfg = _state["cfg"] or {}
+        am  = sol.get("minus_achieved") or "—"
+        ap  = sol.get("plus_achieved")  or "—"
+        tm  = cfg.get("pack_minus_target", "?")
+        tp  = cfg.get("pack_plus_target",  "?")
+        ms  = "✓" if am == tm else f"→ {am}"
+        ps  = "✓" if ap == tp else f"→ {ap}"
+        parts = [f"PACK−: {ms}", f"PACK+: {ps}"]
+        if sol.get("jumps"):
+            parts.append(f"Jumps: {len(sol['jumps'])}")
+        if sol.get("failure"):
+            parts.append(f"⚠ {FAILURE_MESSAGES.get(sol['failure'], sol['failure'])}")
+        return (idx + 1, len(sols), "   ".join(parts))
+
+    # ── Cleanup on Cancel ─────────────────────────────────────────────────
+
     def _cleanup() -> None:
-        """Remove the last preview from the document (called on Cancel)."""
-        if _last_root:
-            _delete_tree(doc, _last_root[0])
+        last = _state["last_root"]
+        if last:
+            _delete_tree(doc, last[0])
             doc.recompute()
 
-    cfg = get_user_settings(load_defaults(), preview_fn=_draw, cleanup_fn=_cleanup)
+    cfg = get_user_settings(
+        load_defaults(),
+        preview_fn=_draw,
+        cleanup_fn=_cleanup,
+        prev_fn=_prev,
+        next_fn=_next,
+        nav_info_fn=_nav_info,
+    )
     if cfg is None:
         _cleanup()
         print("BatteryPackLayoutTool: cancelled.")
@@ -239,7 +294,13 @@ def run() -> None:
     except Exception as exc:
         print(f"BatteryPackLayoutTool: busbar catalog check skipped — {exc}")
 
-    _draw(cfg)
+    # On OK: re-render whichever solution the user navigated to (no recompute).
+    # If the user never clicked Preview, do a full compute+render now.
+    if _state["solutions"]:
+        _render(_state["cfg"] or {**cfg, **build_layers(cfg)},
+                _state["solutions"][_state["idx"]])
+    else:
+        _draw(cfg)
     print("BatteryPackLayoutTool: done.")
 
 

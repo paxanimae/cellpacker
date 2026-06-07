@@ -231,8 +231,8 @@ def run() -> None:
         ap  = sol.get("plus_achieved")  or "—"
         tm  = cfg.get("pack_minus_target", "?")
         tp  = cfg.get("pack_plus_target",  "?")
-        ms  = "✓" if am == tm else f"→ {am}"
-        ps  = "✓" if ap == tp else f"→ {ap}"
+        ms  = "✓" if am == tm else f"{tm} → {am}"
+        ps  = "✓" if ap == tp else f"{tp} → {ap}"
         parts = [f"PACK−: {ms}", f"PACK+: {ps}"]
         if sol.get("jumps"):
             parts.append(f"Jumps: {len(sol['jumps'])}")

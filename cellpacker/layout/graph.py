@@ -121,15 +121,25 @@ def _grow_cluster(
     target_p: int,
     used: set[int],
     points: list[tuple[float, float]],
+    group_arrangement: str = "compact",
+    grid_angle_deg: float = 0.0,
 ) -> frozenset[int] | None:
-    """Grow a compact connected P-cluster from *seed*, avoiding *used* cells.
+    """Grow a connected P-cluster from *seed*, avoiding *used* cells.
 
-    At each step picks the frontier cell closest to the current cluster
-    centroid.  This produces a roughly-circular blob rather than an elongated
-    strip, which is the correct physical shape for a series group.
+    Growth strategy is controlled by *group_arrangement*:
 
-    Direction is controlled by the *seed* choice at the call site — the
-    caller sorts frontier seeds by distance to the next waypoint.
+    "compact"
+        Grow toward the current cluster centroid — produces a roughly-circular
+        blob.  Works for any pack shape.
+
+    "row_aligned"
+        Prefer frontier cells on the same hex row as the seed (same coordinate
+        along the axis perpendicular to *grid_angle_deg*).  Produces strip-like
+        groups that sit neatly within one row.  Breaks ties by distance to
+        centroid so the strip stays contiguous.
+
+    "wide_interface"
+        Falls back to compact for now (future: bias toward the next-group boundary).
 
     Returns None if a full P-cluster cannot be formed.
     """
@@ -140,12 +150,39 @@ def _grow_cluster(
     cluster: set[int] = {seed}
     frontier: set[int] = graph[seed] & available
 
+    # Pre-compute row-alignment reference for "row_aligned"
+    if group_arrangement == "row_aligned":
+        angle_rad = math.radians(grid_angle_deg)
+        # Cross-axis (perpendicular to rows): projection onto this gives row index
+        cross_x = -math.sin(angle_rad)
+        cross_y =  math.cos(angle_rad)
+        seed_cross = points[seed][0] * cross_x + points[seed][1] * cross_y
+    else:
+        cross_x = cross_y = seed_cross = 0.0  # unused
+
     while len(cluster) < target_p:
         if not frontier:
             return None
         cx = sum(points[c][0] for c in cluster) / len(cluster)
         cy = sum(points[c][1] for c in cluster) / len(cluster)
-        next_cell = min(frontier, key=lambda c: _dist(points[c], (cx, cy)))
+
+        if group_arrangement == "row_aligned":
+            # Primary: stay on same row (minimise cross-axis displacement from seed).
+            # Secondary: stay close to current centroid (contiguous strip).
+            def _key_row(c,
+                         _cx=cx, _cy=cy,
+                         _cross_x=cross_x, _cross_y=cross_y,
+                         _seed_cross=seed_cross):
+                cross_dist = abs(
+                    points[c][0] * _cross_x + points[c][1] * _cross_y - _seed_cross
+                )
+                centroid_dist = _dist(points[c], (_cx, _cy))
+                return (cross_dist, centroid_dist)
+            next_cell = min(frontier, key=_key_row)
+        else:
+            # compact (and wide_interface fallback): grow toward centroid
+            next_cell = min(frontier, key=lambda c: _dist(points[c], (cx, cy)))
+
         cluster.add(next_cell)
         frontier.discard(next_cell)
         frontier |= (graph[next_cell] & available) - cluster
@@ -200,6 +237,8 @@ def find_series_path(
     n_starts: int = 30,
     top_n: int = 5,
     grow_path: str = "direct",
+    group_arrangement: str = "compact",
+    grid_angle_deg: float = 0.0,
 ) -> list[dict]:
     """Find up to *top_n* distinct S×P series paths through *points*.
 
@@ -242,7 +281,8 @@ def find_series_path(
 
     for seed in starts[:n_starts]:
         used: set[int] = set()
-        first = _grow_cluster(graph, seed, target_p, used, points)
+        first = _grow_cluster(graph, seed, target_p, used, points,
+                              group_arrangement, grid_angle_deg)
         if first is None:
             continue
 

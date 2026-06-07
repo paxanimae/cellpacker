@@ -155,36 +155,65 @@ def _inter_group_edges(
     pts_a: list[App.Vector],
     pts_b: list[App.Vector],
     pitch_x: float,
+    p_rating: int = 1,
 ) -> list[tuple[App.Vector, App.Vector]]:
-    """Return all hex-adjacent cross-group cell pairs between groups A and B.
+    """Return bridge strip endpoints between groups A and B.
 
-    Only pairs whose XY distance is ≤ pitch_x × 1.05 (one hex step) are
-    returned, so bridges are always a single cell-to-cell hop that cannot
-    pass through any other cell.
+    Uses greedy 1-to-1 nearest-neighbour matching so each cell appears
+    in at most one bridge strip.  Sorting by distance naturally prefers
+    hex-adjacent pairs (shortest hops first) without crossing longer gaps.
 
-    Fallback: if no adjacent pairs exist (gap / jump case), return the
-    single closest pair so at least one bridge is drawn.
+    With p_rating=N, N matched pairs share one strip drawn between the
+    centroid of the A-side cells and the centroid of the B-side cells.
+
+    Returns one (pt_a, pt_b) pair per strip — always exactly
+    ``ceil(min(len(pts_a), len(pts_b)) / p_rating)`` strips.
     """
-    threshold_sq = (pitch_x * 1.05) ** 2
-    adjacent: list[tuple[float, App.Vector, App.Vector]] = []
+    if not pts_a or not pts_b:
+        return []
 
-    for pa in pts_a:
-        for pb in pts_b:
-            dx = pa.x - pb.x
-            dy = pa.y - pb.y
-            d_sq = dx * dx + dy * dy
-            if d_sq <= threshold_sq:
-                adjacent.append((d_sq, pa, pb))
+    # All cross-group distances, sorted nearest-first.
+    all_pairs: list[tuple[float, int, int]] = []
+    for i, pa in enumerate(pts_a):
+        for j, pb in enumerate(pts_b):
+            dx, dy = pa.x - pb.x, pa.y - pb.y
+            all_pairs.append((dx * dx + dy * dy, i, j))
+    all_pairs.sort()
 
-    if adjacent:
-        return [(pa, pb) for _, pa, pb in adjacent]
+    # Greedy 1-to-1 match: each cell in A and B used at most once.
+    used_a: set[int] = set()
+    used_b: set[int] = set()
+    matched: list[tuple[App.Vector, App.Vector]] = []
 
-    # No touching pairs — find the single nearest pair as fallback.
-    best = min(
-        ((pa, pb) for pa in pts_a for pb in pts_b),
-        key=lambda pair: (pair[0].x - pair[1].x) ** 2 + (pair[0].y - pair[1].y) ** 2,
-    )
-    return [best]
+    for _, i, j in all_pairs:
+        if i in used_a or j in used_b:
+            continue
+        matched.append((pts_a[i], pts_b[j]))
+        used_a.add(i)
+        used_b.add(j)
+        if len(used_a) == len(pts_a) or len(used_b) == len(pts_b):
+            break
+
+    # Group matched pairs by p_rating → one strip per group (centroid-to-centroid).
+    p = max(1, p_rating)
+
+    def _centroid(vecs: list[App.Vector]) -> App.Vector:
+        n = len(vecs)
+        return App.Vector(
+            sum(v.x for v in vecs) / n,
+            sum(v.y for v in vecs) / n,
+            sum(v.z for v in vecs) / n,
+        )
+
+    result: list[tuple[App.Vector, App.Vector]] = []
+    for start in range(0, len(matched), p):
+        chunk = matched[start:start + p]
+        result.append((
+            _centroid([pa for pa, _ in chunk]),
+            _centroid([pb for _, pb in chunk]),
+        ))
+
+    return result
 
 
 # ── Public drawing functions ───────────────────────────────────────────────
@@ -290,8 +319,9 @@ def draw_series_busbars(
                               sketch_normal, bridge_z) for c in row_b]
 
         label = f"BB_S{s:02d}_S{s_next:02d}"
+        p_rating = max(1, cfg.get("busbar_p_rating", 1))
         for idx, (pa, pb) in enumerate(
-            _inter_group_edges(pts_a, pts_b, pitch_x), start=1
+            _inter_group_edges(pts_a, pts_b, pitch_x, p_rating), start=1
         ):
             _busbar_segment(doc, pa, pb, f"{label}_{idx:02d}",
                             grp, cfg, color, sketch_normal)

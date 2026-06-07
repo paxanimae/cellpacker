@@ -121,11 +121,16 @@ def _grow_cluster(
     target_p: int,
     used: set[int],
     points: list[tuple[float, float]],
-    toward: tuple[float, float],
 ) -> frozenset[int] | None:
-    """Greedily grow a connected P-cluster from *seed*, avoiding *used* cells.
+    """Grow a compact connected P-cluster from *seed*, avoiding *used* cells.
 
-    At each growth step picks the frontier cell closest to *toward*.
+    At each step picks the frontier cell closest to the current cluster
+    centroid.  This produces a roughly-circular blob rather than an elongated
+    strip, which is the correct physical shape for a series group.
+
+    Direction is controlled by the *seed* choice at the call site — the
+    caller sorts frontier seeds by distance to the next waypoint.
+
     Returns None if a full P-cluster cannot be formed.
     """
     available = set(range(len(points))) - used
@@ -138,10 +143,12 @@ def _grow_cluster(
     while len(cluster) < target_p:
         if not frontier:
             return None
-        next_cell = min(frontier, key=lambda c: _dist(points[c], toward))
+        cx = sum(points[c][0] for c in cluster) / len(cluster)
+        cy = sum(points[c][1] for c in cluster) / len(cluster)
+        next_cell = min(frontier, key=lambda c: _dist(points[c], (cx, cy)))
         cluster.add(next_cell)
         frontier.discard(next_cell)
-        frontier |= graph[next_cell] & available - cluster
+        frontier |= (graph[next_cell] & available) - cluster
 
     return frozenset(cluster)
 
@@ -174,8 +181,8 @@ def _score_path(
 
     return (
         _dist(c_start, minus_pt) * 1000
-        + _dist(c_end, plus_pt)  * 100
-        + compactness            * 10
+        + _dist(c_end,  plus_pt) * 100
+        + compactness            * 80
     )
 
 
@@ -227,7 +234,7 @@ def find_series_path(
 
     for seed in starts[:n_starts]:
         used: set[int] = set()
-        first = _grow_cluster(graph, seed, target_p, used, points, minus_pt)
+        first = _grow_cluster(graph, seed, target_p, used, points)
         if first is None:
             continue
 
@@ -246,7 +253,7 @@ def find_series_path(
             next_cluster: frozenset[int] | None = None
 
             for fseed in sorted(frontier, key=lambda c: _dist(points[c], wp)):
-                nc = _grow_cluster(graph, fseed, target_p, used, points, wp)
+                nc = _grow_cluster(graph, fseed, target_p, used, points)
                 if nc is not None:
                     next_cluster = nc
                     break
@@ -258,7 +265,7 @@ def find_series_path(
                         failure = "dead_end"
                         break
                     jseed = min(unused, key=lambda c: _dist(points[c], wp))
-                    next_cluster = _grow_cluster(graph, jseed, target_p, used, points, wp)
+                    next_cluster = _grow_cluster(graph, jseed, target_p, used, points)
                     if next_cluster is None:
                         failure = "dead_end"
                         break

@@ -97,6 +97,25 @@ DEFAULTS: dict = {
     #               "top-right", "top", "top-left", "left"
     "pack_minus_target": "bottom-left",
     "pack_plus_target":  "top-right",
+
+    # Group arrangement — shape of each individual series group:
+    #   "compact"        blob growing toward its own centroid (default)
+    #   "row_aligned"    prefer cells that stay on the same grid row
+    #   "wide_interface" maximise the number of touching cells with the next group
+    "group_arrangement": "compact",
+
+    # Grow-path — how the series chain advances from PACK− to PACK+:
+    #   "direct"      interpolate waypoints along PACK−→PACK+ line (default)
+    #   "min_bridge"  greedily pick the adjacent cluster with the shortest bridge
+    #   "serpentine"  snake row by row along the hex grid (best for rect. packs)
+    "grow_path": "direct",
+
+    # Interface width priority — how busbar bridges between groups are chosen:
+    #   "widest"    maximise touching cell pairs → lowest resistance
+    #   "balanced"  balance bridge length against number of connections
+    #   "shortest"  minimise total bridge copper length
+    "interface_priority": "balanced",
+
     # Allow the series chain to jump across gaps when no adjacent path exists.
     "allow_jumps": False,
 

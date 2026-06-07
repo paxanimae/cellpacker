@@ -193,6 +193,7 @@ def run() -> None:
             cfg.get("allow_jumps", False),
             bbox,
             top_n=5,
+            grow_path=cfg.get("grow_path", "direct"),
         )
 
         _state["cfg"]        = cfg

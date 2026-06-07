@@ -199,6 +199,7 @@ def find_series_path(
     bbox,
     n_starts: int = 30,
     top_n: int = 5,
+    grow_path: str = "direct",
 ) -> list[dict]:
     """Find up to *top_n* distinct S×P series paths through *points*.
 
@@ -252,6 +253,7 @@ def find_series_path(
 
         for step in range(1, target_s):
             wp = _waypoint(step)
+            cur_centroid = _centroid(path[-1], points)
 
             frontier: set[int] = set()
             for c in path[-1]:
@@ -259,7 +261,16 @@ def find_series_path(
 
             next_cluster: frozenset[int] | None = None
 
-            for fseed in sorted(frontier, key=lambda c: _dist(points[c], wp)):
+            if grow_path == "min_bridge":
+                # Sort frontier seeds by distance to current cluster centroid.
+                # This minimises bridge length at each step; the chain still
+                # advances because the frontier is always hex-adjacent.
+                seed_key = lambda c: _dist(points[c], cur_centroid)
+            else:
+                # "direct" (default): advance toward the linear waypoint.
+                seed_key = lambda c: _dist(points[c], wp)
+
+            for fseed in sorted(frontier, key=seed_key):
                 nc = _grow_cluster(graph, fseed, target_p, used, points)
                 if nc is not None:
                     next_cluster = nc

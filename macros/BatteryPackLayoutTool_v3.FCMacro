@@ -41,6 +41,7 @@ from cellpacker.geometry.grid import grid_params_from_config, generate_candidate
 from cellpacker.geometry.transforms import get_edge_angle_in_local_coords, get_edge_local_endpoints
 from cellpacker.layout.sweep import sweep_for_candidates
 from cellpacker.layout.serpentine import serpentine_solutions, FAILURE_MESSAGES
+from cellpacker.layout.architect import architecture_solutions, OPPOSITE
 from cellpacker.geometry.layers import build_layers
 from cellpacker.layout.selector import build_selected_by_series
 from cellpacker.drawing.cells import (
@@ -97,9 +98,11 @@ def run() -> None:
         print(f"Selected        : {solution['selected_count']} / "
               f"{cfg['target_s'] * cfg['target_p']}"
               f"  (layout {_state['idx'] + 1} of {len(_state['solutions'])})")
+        if solution.get("arch_info"):
+            print(f"Architecture    : {solution['arch_info']}")
         if solution["failure"]:
             print(f"WARNING: {FAILURE_MESSAGES.get(solution['failure'], solution['failure'])}")
-        else:
+        if solution["selected"]:
             am = solution["minus_achieved"]
             ap = solution["plus_achieved"]
             tm = cfg.get("pack_minus_target", "bottom-left")
@@ -139,7 +142,9 @@ def run() -> None:
                                  cfg["alignment_arrow_length"])
 
         series_groups = build_series_groups(
-            doc, new_root, cfg["target_s"], groups["selected"])
+            doc, new_root,
+            solution.get("achieved_s") or cfg["target_s"],
+            groups["selected"])
         selected_by_series = build_selected_by_series(solution["selected"])
 
         if not selected_by_series:
@@ -163,7 +168,6 @@ def run() -> None:
                                 groups["busbars"], new_root, cfg, sketch_normal)
 
         doc.recompute()
-        Gui.ActiveDocument.ActiveView.fitAll()
 
     # ── Full recompute (called by Preview) ────────────────────────────────
 
@@ -185,16 +189,49 @@ def run() -> None:
             grid_angle, points = sweep_for_candidates(face, bbox, angle_list, params)
             print(f"BatteryPackLayoutTool: sweep best angle = {grid_angle:.2f}°")
 
-        solutions = serpentine_solutions(
+        # Derive legacy PACK−/PACK+ corner targets from the architecture
+        # terms (used by the adaptive fallback and the nav-bar display).
+        t_side = cfg.get("terminal_side", "left")
+        t_ends = cfg.get("terminal_ends", "auto")
+        cfg["pack_minus_target"] = t_side
+        cfg["pack_plus_target"]  = (t_side if t_ends == "same_end"
+                                    else OPPOSITE.get(t_side, t_side))
+
+        # ── Architecture-first: place the ideal pack as specified ─────────
+        solutions = architecture_solutions(
             points,
             params.pitch_y,
             grid_angle,
             cfg["target_s"], cfg["target_p"],
-            cfg.get("pack_minus_target", "bottom-left"),
-            cfg.get("pack_plus_target",  "top-right"),
-            bbox,
+            group_shape=cfg.get("group_shape", "auto"),
+            series_path=cfg.get("series_path", "auto"),
+            terminal_ends=t_ends,
+            terminal_side=t_side,
+            pack_position=cfg.get("pack_position", "anywhere"),
+            bbox=bbox,
             top_n=5,
+            priority=cfg.get("layout_priority", "group_quality"),
+            degrade_mode=cfg.get("degrade_mode", "keep_p"),
         )
+        if solutions:
+            print(f"BatteryPackLayoutTool: architecture placed — "
+                  f"{solutions[0].get('arch_info', '')}")
+        else:
+            # ── Fallback: adaptive serpentine search ──────────────────────
+            print("BatteryPackLayoutTool: requested architecture does not "
+                  "fit — using adaptive search")
+            solutions = serpentine_solutions(
+                points,
+                params.pitch_y,
+                grid_angle,
+                cfg["target_s"], cfg["target_p"],
+                cfg["pack_minus_target"],
+                cfg["pack_plus_target"],
+                bbox,
+                top_n=5,
+                priority=cfg.get("layout_priority", "group_quality"),
+                degrade_mode=cfg.get("degrade_mode", "keep_p"),
+            )
 
         _state["cfg"]        = cfg
         _state["params"]     = params
@@ -234,6 +271,10 @@ def run() -> None:
         ms  = "✓" if am == tm else f"{tm} → {am}"
         ps  = "✓" if ap == tp else f"{tp} → {ap}"
         parts = [f"PACK−: {ms}", f"PACK+: {ps}"]
+        if sol.get("arch_info"):
+            parts.append(sol["arch_info"])
+        else:
+            parts.append("⚠ adaptive result — architecture not honored")
         if sol.get("jumps"):
             parts.append(f"Jumps: {len(sol['jumps'])}")
         if sol.get("failure"):

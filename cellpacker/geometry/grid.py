@@ -67,10 +67,27 @@ def generate_candidates_from_edge(
     # Sweep range along the edge: cover the full face diagonal so no cell is missed
     diag = math.sqrt((bbox.XMax - bbox.XMin) ** 2 + (bbox.YMax - bbox.YMin) ** 2)
 
+    # Maximum useful perpendicular distance: projection of each bbox corner
+    # onto the grow direction.  We stop once the row origin is beyond the
+    # farthest corner (+ one cell radius margin).
+    max_perp = max(
+        uy[0] * (bbox.XMin - p1_local[0]) + uy[1] * (bbox.YMin - p1_local[1]),
+        uy[0] * (bbox.XMin - p1_local[0]) + uy[1] * (bbox.YMax - p1_local[1]),
+        uy[0] * (bbox.XMax - p1_local[0]) + uy[1] * (bbox.YMin - p1_local[1]),
+        uy[0] * (bbox.XMax - p1_local[0]) + uy[1] * (bbox.YMax - p1_local[1]),
+    )
+
     points: list[tuple[float, float]] = []
     row = 0
     while True:
         perp = r + row * py
+
+        # Stop when we have grown past the farthest bbox corner in the
+        # grow direction.  This is correct for ANY shape (convex or not)
+        # because a cell origin beyond max_perp+r cannot fit inside the bbox.
+        if perp > max_perp + r:
+            break
+
         ox = p1_local[0] + uy[0] * perp
         oy = p1_local[1] + uy[1] * perp
 
@@ -86,9 +103,6 @@ def generate_candidates_from_edge(
             if circle_fits(face, x, y, r):
                 row_pts.append((x, y))
             t += px
-
-        if not row_pts and row > 0:
-            break
 
         points.extend(row_pts)
         row += 1

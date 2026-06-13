@@ -77,21 +77,47 @@ def point_inside_face(face, x: float, y: float, tol: float = 0.05) -> bool:
     return face.isInside(App.Vector(x, y, 0), tol, True)
 
 
-def circle_fits(face, cx: float, cy: float, radius: float, samples: int = 24) -> bool:
-    if not point_inside_face(face, cx, cy):
+def circle_fits(face, cx: float, cy: float, radius: float,
+                samples: int = 12) -> bool:
+    """Return True if a circle of *radius* centred at (cx, cy) fits entirely
+    inside *face*.
+
+    Fast path: axis-aligned bbox pre-reject (pure Python, zero FreeCAD calls).
+    Then: centre ``isInside`` check + *samples* evenly-spaced perimeter checks.
+    12 samples (every 30°) is sufficient for straight-edge polygons and gives
+    good coverage on gentle curves without the distToShape issues seen on
+    complex irregular shapes.
+    """
+    import FreeCAD as App
+
+    # ── Fast reject: AABB (pure Python, no FreeCAD API calls) ──────────────
+    bb = face.BoundBox
+    if cx - radius < bb.XMin or cx + radius > bb.XMax:
         return False
+    if cy - radius < bb.YMin or cy + radius > bb.YMax:
+        return False
+
+    # ── Centre must be inside ──────────────────────────────────────────────
+    if not face.isInside(App.Vector(cx, cy, 0), 0.05, True):
+        return False
+
+    # ── Perimeter samples ──────────────────────────────────────────────────
+    step = 2.0 * math.pi / samples
     for i in range(samples):
-        t = 2 * math.pi * i / samples
-        if not point_inside_face(face, cx + radius * math.cos(t), cy + radius * math.sin(t)):
+        t = i * step
+        px = cx + radius * math.cos(t)
+        py = cy + radius * math.sin(t)
+        if not face.isInside(App.Vector(px, py, 0), 0.05, True):
             return False
     return True
 
 
 def point_to_boundary_distance(face, x: float, y: float) -> float:
+    """Return the distance from (x, y) to the nearest boundary edge of *face*."""
     import Part
     import FreeCAD as App
     try:
         v = Part.Vertex(App.Vector(x, y, 0))
-        return float(face.distToShape(v)[0])
+        return float(face.OuterWire.distToShape(v)[0])
     except Exception:
         return 0.0

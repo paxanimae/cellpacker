@@ -21,6 +21,7 @@ Row: TypeAlias = list[Point]
 def cluster_rows(
     points: list[Point],
     pitch_y: float,
+    *,
     tol: float | None = None,
     angle_deg: float = 0.0,
 ) -> list[Row]:

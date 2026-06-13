@@ -958,81 +958,189 @@ the dialog. Adjust and preview as many times as you like, then click
             lay.setSpacing(8)
             d = self._defs
 
-            # ── Group arrangement ─────────────────────────────────────────
-            grp_shape = Qt.QGroupBox("Group arrangement")
-            grp_shape.setToolTip(
-                "Controls the shape of each individual series group\n"
-                "(how the P cells within one group are arranged).")
+            # ── Algorithm description ─────────────────────────────────────
+            info = Qt.QLabel(
+                "<b>Architecture-first layout</b><br>"
+                "Describe the pack you want — group shape, series path, "
+                "terminal ends — and the tool places that exact architecture "
+                "inside the sketch. If it doesn't fit, the adaptive search "
+                "takes over and the result is flagged. Click <b>Preview</b> "
+                "to browse up to 5 candidate layouts."
+            )
+            info.setWordWrap(True)
+            info.setStyleSheet("color: gray; padding: 4px 0px;")
+            lay.addWidget(info)
+
+            # ── Group shape ───────────────────────────────────────────────
+            grp_shape = Qt.QGroupBox("Group shape — preferred arrangement of the P cells of one group")
             shape_lay = Qt.QVBoxLayout(grp_shape)
-            self._group_arrangement = self._radio_group(
+            self._group_shape = self._radio_group(
                 shape_lay,
                 [
-                    ("compact",        "Compact  — tight circular cluster, works for any boundary"),
-                    ("row_aligned",    "Row-aligned  — cells prefer to stay on the same grid row"),
-                    ("wide_interface", "Wide interface  — maximise touching cells with the next group"),
+                    ("auto",  "Auto  — try block first, then line"),
+                    ("line",  "Line  — 1 row × P cells (ladder rung)"),
+                    ("block", "Block  — closest-to-square tile (P=4 → 2×2)"),
                 ],
-                d.get("group_arrangement", "compact"),
+                d.get("group_shape", "auto"),
                 {
-                    "compact":
-                        "Each group grows as a roughly circular blob.\n"
-                        "Works well for any pack shape.",
-                    "row_aligned":
-                        "Groups prefer cells that lie on the same hex row.\n"
-                        "Produces strip-like groups — best for long rectangular packs.",
-                    "wide_interface":
-                        "Groups are shaped to maximise how many cells touch the next group.\n"
-                        "Lowers bridge busbar resistance by spreading current across more connections.",
+                    "line":
+                        "A straight run of P cells along one hex row.\n"
+                        "Matches off-the-shelf nickel strips.",
+                    "block":
+                        "A compact tile, e.g. 2×2 for P=4 or 2×3 for P=6.\n"
+                        "Prime P (3, 5, 7…) has no block tiling and falls back to line.",
+                    "auto":
+                        "Both shapes are tried; the better-scoring placement wins.",
                 },
             )
             lay.addWidget(grp_shape)
 
-            # ── Grow-path ─────────────────────────────────────────────────
-            grp_path = Qt.QGroupBox("Grow-path")
-            grp_path.setToolTip(
-                "Controls how the series chain advances from PACK− to PACK+\n"
-                "(the overall route the chain follows through the pack).")
+            # ── Series path ───────────────────────────────────────────────
+            grp_path = Qt.QGroupBox("Series path — preferred chaining (geometry may force extra folds)")
             path_lay = Qt.QVBoxLayout(grp_path)
-            self._grow_path = self._radio_group(
+            self._series_path = self._radio_group(
                 path_lay,
                 [
-                    ("direct",      "Direct  — straight path from PACK− to PACK+"),
-                    ("min_bridge",  "Minimize bridge  — greedy shortest bridge at each step"),
-                    ("serpentine",  "Serpentine  — snake row by row along the hex grid"),
+                    ("auto",     "Auto  — fewest lanes that fit (1–4)"),
+                    ("straight", "Straight  — single lane, no folds"),
+                    ("u_fold",   "U-fold  — two lanes, one fold; chain returns"),
                 ],
-                d.get("grow_path", "direct"),
+                d.get("series_path", "auto"),
                 {
-                    "direct":
-                        "The chain follows a straight line from PACK− to PACK+.\n"
-                        "Waypoints are evenly spaced along that line.",
-                    "min_bridge":
-                        "At each step, the next group is chosen to minimise the\n"
-                        "bridge busbar length (distance to the current group).\n"
-                        "Produces shorter, cheaper wiring at the cost of less\n"
-                        "predictable terminal placement.",
-                    "serpentine":
-                        "The chain snakes back and forth along the hex grid rows\n"
-                        "(like a boustrophedon path).\n"
-                        "Most manufacturable layout for rectangular packs.\n"
-                        "Falls back to Direct if the pack has no clear row structure.",
+                    "straight":
+                        "One straight run of groups. Terminals end up on\n"
+                        "opposite ends of the pack.",
+                    "u_fold":
+                        "Out along one lane, back along the second.\n"
+                        "Both terminals end up on the same end.",
+                    "auto":
+                        "Lane counts 1–4 are tried, filtered by the\n"
+                        "Terminal-ends choice below.",
                 },
             )
             lay.addWidget(grp_path)
 
-            # ── Terminal placement ────────────────────────────────────────
-            grp_terminals = Qt.QGroupBox("Terminal placement")
-            grp_terminals.setToolTip(
-                "Choose where PACK− and PACK+ should end up.\n"
-                "Scored in priority order: PACK− first, then PACK+.")
-            term_lay = Qt.QHBoxLayout(grp_terminals)
-            self.minus_compass = self._make_compass(
-                "PACK−", d.get("pack_minus_target", "bottom-left"))
-            self.plus_compass  = self._make_compass(
-                "PACK+", d.get("pack_plus_target",  "top-right"))
-            term_lay.addWidget(self.minus_compass)
+            # ── Terminal ends + side ──────────────────────────────────────
+            grp_term = Qt.QGroupBox("Terminals — where PACK− / PACK+ sit on the pack")
+            term_lay = Qt.QHBoxLayout(grp_term)
+            ends_lay = Qt.QVBoxLayout()
+            self._terminal_ends = self._radio_group(
+                ends_lay,
+                [
+                    ("auto",          "Auto"),
+                    ("same_end",      "Same end  — both terminals together"),
+                    ("opposite_ends", "Opposite ends"),
+                ],
+                d.get("terminal_ends", "auto"),
+                {
+                    "same_end":
+                        "PACK− and PACK+ leave from the same end of the pack\n"
+                        "(connector/BMS wiring on one side). Needs an even\n"
+                        "number of lanes.",
+                    "opposite_ends":
+                        "PACK− and PACK+ on opposite ends (straight chain or\n"
+                        "odd lane count).",
+                    "auto": "Whatever the chosen series path produces.",
+                },
+            )
+            term_lay.addLayout(ends_lay)
             term_lay.addSpacing(16)
-            term_lay.addWidget(self.plus_compass)
+            self.terminal_side_compass = self._make_compass(
+                "Terminal side", d.get("terminal_side", "left"))
+            self.terminal_side_compass.setToolTip(
+                "Which side of the pack the PACK− terminal faces.\n"
+                "With 'Same end', PACK+ faces the same side;\n"
+                "with 'Opposite ends', PACK+ faces the opposite side.")
+            term_lay.addWidget(self.terminal_side_compass)
             term_lay.addStretch()
-            lay.addWidget(grp_terminals)
+            lay.addWidget(grp_term)
+
+            # ── Pack position ─────────────────────────────────────────────
+            grp_pos = Qt.QGroupBox("Pack position — where the pack sits inside the sketch")
+            pos_lay = Qt.QHBoxLayout(grp_pos)
+            pos_radio_lay = Qt.QVBoxLayout()
+            self._pack_position_mode = self._radio_group(
+                pos_radio_lay,
+                [
+                    ("anywhere", "Anywhere  — position doesn't matter"),
+                    ("center",   "Center of the sketch"),
+                    ("compass",  "Toward a side/corner →"),
+                ],
+                ("compass" if d.get("pack_position", "anywhere") in
+                 ("top-left", "top", "top-right", "left", "right",
+                  "bottom-left", "bottom", "bottom-right")
+                 else d.get("pack_position", "anywhere")),
+                None,
+            )
+            pos_lay.addLayout(pos_radio_lay)
+            pos_lay.addSpacing(16)
+            default_pos = d.get("pack_position", "anywhere")
+            self.pack_pos_compass = self._make_compass(
+                "Direction",
+                default_pos if default_pos in
+                ("top-left", "top", "top-right", "left", "right",
+                 "bottom-left", "bottom", "bottom-right") else "bottom-left")
+            pos_lay.addWidget(self.pack_pos_compass)
+            pos_lay.addStretch()
+            lay.addWidget(grp_pos)
+
+            # ── Layout priority ───────────────────────────────────────────
+            grp_prio = Qt.QGroupBox("Layout priority")
+            grp_prio.setToolTip(
+                "How candidate layouts are ranked. The solution browser\n"
+                "(← / →) always lets you compare the top 5 regardless.")
+            prio_lay = Qt.QVBoxLayout(grp_prio)
+            self._layout_priority = self._radio_group(
+                prio_lay,
+                [
+                    ("group_quality", "Group quality first  — straight P-groups, short bridges; terminals as tie-breaker"),
+                    ("terminals",     "Terminal placement first  — PACK−/PACK+ position dominates"),
+                    ("balanced",      "Balanced  — weigh group quality and terminals equally"),
+                ],
+                d.get("layout_priority", "group_quality"),
+                {
+                    "group_quality":
+                        "Best electro-technical pack: every parallel group a straight\n"
+                        "stick of P cells, groups stacked side-by-side (ladder).\n"
+                        "Terminal targets only break ties.",
+                    "terminals":
+                        "Prioritises getting PACK− and PACK+ to the chosen corners,\n"
+                        "accepting less ideal group shapes if needed.",
+                    "balanced":
+                        "Compromise when both group quality and terminal\n"
+                        "placement matter.",
+                },
+            )
+            lay.addWidget(grp_prio)
+
+            # ── If S×P doesn't fit ────────────────────────────────────────
+            grp_degrade = Qt.QGroupBox("If S×P doesn't fit")
+            grp_degrade.setToolTip(
+                "What to do when the requested S×P count cannot be placed\n"
+                "inside the sketch. The result is always flagged with a\n"
+                "warning showing requested vs. achieved.")
+            deg_lay = Qt.QVBoxLayout(grp_degrade)
+            self._degrade_mode = self._radio_group(
+                deg_lay,
+                [
+                    ("keep_p",    "Keep P, reduce S  — preserve group capacity, voltage drops"),
+                    ("keep_s",    "Keep S, reduce P  — preserve voltage, capacity drops"),
+                    ("max_cells", "Maximize cell count  — largest s×p that fits, any split"),
+                ],
+                d.get("degrade_mode", "keep_p"),
+                {
+                    "keep_p":
+                        "Group current capability stays as designed;\n"
+                        "the pack voltage is reduced.",
+                    "keep_s":
+                        "Pack voltage stays as designed;\n"
+                        "capacity / max current is reduced.",
+                    "max_cells":
+                        "Fits as many cells as possible regardless of\n"
+                        "the S/P split.",
+                },
+            )
+            lay.addWidget(grp_degrade)
 
             # ── Interface width priority ──────────────────────────────────
             grp_iface = Qt.QGroupBox("Interface width priority")
@@ -1061,16 +1169,6 @@ the dialog. Adjust and preview as many times as you like, then click
                 },
             )
             lay.addWidget(grp_iface)
-
-            # ── Advanced ──────────────────────────────────────────────────
-            grp_adv = Qt.QGroupBox("Advanced")
-            adv_lay = Qt.QFormLayout(grp_adv)
-            self.allow_jumps = self._check(d.get("allow_jumps", False))
-            self._row(adv_lay, "Allow jumps", self.allow_jumps,
-                "When no adjacent path exists between series groups, allow\n"
-                "the chain to jump to a non-adjacent cluster as a last resort.\n"
-                "Jumps are flagged in the solution browser after each Preview.")
-            lay.addWidget(grp_adv)
 
             lay.addStretch()
             scroll.setWidget(inner)
@@ -1126,13 +1224,17 @@ the dialog. Adjust and preview as many times as you like, then click
                 "fallback_angle_deg":            self.fallback_angle.value(),
                 "edge_angle_offsets_deg":        self.edge_offsets.text(),
                 "angles_deg":                    self.angles.text(),
-                # Group / terminal placement
-                "pack_minus_target":  self.minus_compass.value(),
-                "pack_plus_target":   self.plus_compass.value(),
-                "group_arrangement":  self._group_arrangement(),
-                "grow_path":          self._grow_path(),
+                # Pack architecture
+                "group_shape":        self._group_shape(),
+                "series_path":        self._series_path(),
+                "terminal_ends":      self._terminal_ends(),
+                "terminal_side":      self.terminal_side_compass.value(),
+                "pack_position":      (self.pack_pos_compass.value()
+                                       if self._pack_position_mode() == "compass"
+                                       else self._pack_position_mode()),
                 "interface_priority": self._interface_priority(),
-                "allow_jumps":        self.allow_jumps.isChecked(),
+                "layout_priority":    self._layout_priority(),
+                "degrade_mode":       self._degrade_mode(),
                 # Passthrough
                 "busbar_color_top":              d["busbar_color_top"],
                 "busbar_color_bottom":           d["busbar_color_bottom"],
